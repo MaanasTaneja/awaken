@@ -4,6 +4,7 @@ memories in HydraDB, advance the cursor.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -196,7 +197,13 @@ def sync_npc(db: Session, npc_id: str, player_id: str = "player_1") -> dict[str,
     if events:
         cursor.last_processed_event_id = events[-1].id
 
-    hydra.store_memories(npc.world_id, npc.id, update["memories"])
+    # Belief memories are only needed by future syncs — store asynchronously so we
+    # don't block this sync waiting for HydraDB to finish indexing them.
+    threading.Thread(
+        target=hydra.store_memories,
+        args=(npc.world_id, npc.id, update["memories"]),
+        daemon=True,
+    ).start()
 
     db.flush()
     return {

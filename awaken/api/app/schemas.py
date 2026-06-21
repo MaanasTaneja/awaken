@@ -208,7 +208,7 @@ class TalkQuest(BaseModel):
     status: str
 
 
-TrackId = Literal["greeting", "identity", "quest", "quest_status", "opinion", "world_lore"]
+TrackId = Literal["greeting", "identity", "quest", "quest_status", "opinion", "world_lore", "custom"]
 
 
 class TrackOut(BaseModel):
@@ -220,6 +220,7 @@ class TrackOut(BaseModel):
 class InteractionRequest(BaseModel):
     player_id: str = "player_1"
     track: TrackId
+    custom_query: str | None = None
 
 
 class InteractionResponse(BaseModel):

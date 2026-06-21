@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import hydra, models, schemas, simulation
@@ -92,15 +92,23 @@ async def interact(
     world_id: str,
     npc_id: str,
     body: schemas.InteractionRequest,
-    background_tasks: BackgroundTasks,
     debug: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     npc = _load_npc(db, world_id, npc_id)
     faction = db.get(models.Faction, npc.faction_id)
-    track = npc.tracks_json.get(body.track)
-    if track is None:
-        raise HTTPException(400, "track is not configured for this NPC")
+
+    if body.track == "custom":
+        if not body.custom_query or not body.custom_query.strip():
+            raise HTTPException(400, "custom_query is required when track is 'custom'")
+        track = {
+            "player_text": body.custom_query.strip(),
+            "guidance": "Answer freely based on your knowledge, memories, and beliefs about the player.",
+        }
+    else:
+        track = npc.tracks_json.get(body.track)
+        if track is None:
+            raise HTTPException(400, "track is not configured for this NPC")
 
     # Log the interaction as a faction event so other NPCs can learn about it
     db.add(
@@ -118,13 +126,10 @@ async def interact(
     )
     db.commit()
 
-    # Sync NPC beliefs from unprocessed events + gossip — must complete before we
-    # read state, otherwise the debug panel and loadState() show stale values.
-    simulation.sync_npc(db, npc.id, body.player_id)
-
+    # Load state and quests before sync so we can build the recall query immediately.
+    # We use the pre-sync belief_summary to enrich the recall query (minor trade-off:
+    # one component of the query uses the previous summary, which is fine).
     state = simulation.get_or_create_state(db, npc.id, body.player_id)
-    db.commit()
-    state_payload = _state_dict(state)
 
     # Fetch quests first so their titles enrich the recall query
     all_quests = simulation.assigned_quests_for_npc(db, npc.id, body.player_id)
@@ -138,15 +143,16 @@ async def interact(
     if all_quests:
         recall_parts.append(" ".join(q.title for q in all_quests))
 
-    # Retrieve world knowledge + this NPC's private memories from HydraDB
-    # Run in a thread so the blocking SDK call doesn't stall the event loop
-    context = await asyncio.to_thread(
-        hydra.recall_context,
-        world_id,
-        npc.id,
-        " ".join(recall_parts),
-        12,
+    # Run sync_npc (own session/thread) and recall_context in parallel.
+    # sync_npc commits its own changes; we refresh state afterwards to get fresh values.
+    _, context = await asyncio.gather(
+        asyncio.to_thread(_sync_npc_in_background, npc.id, body.player_id),
+        asyncio.to_thread(hydra.recall_context, world_id, npc.id, " ".join(recall_parts), 12),
     )
+
+    # Refresh state so the response and debug panel reflect the just-committed sync.
+    db.refresh(state)
+    state_payload = _state_dict(state)
 
     is_quest_track = body.track == "quest"
     is_status_track = body.track == "quest_status"
