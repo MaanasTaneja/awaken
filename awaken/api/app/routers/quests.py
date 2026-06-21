@@ -15,12 +15,6 @@ def create_quest(world_id: str, body: schemas.QuestCreate, db: Session = Depends
         world_id=world_id,
         stable_key=body.title.lower().replace(" ", "_"),
         completion_event_json={},
-        quest_dialogue_json={
-            "offered_base": body.base_dialogue,
-            "refused_base": None,
-            "active_base": body.base_dialogue,
-            "completed_base": "You completed this task.",
-        },
         **body.model_dump(),
     )
     db.add(q)
@@ -59,22 +53,8 @@ def assign_quest(
     if quest is None or quest.world_id != world_id:
         raise HTTPException(404, "quest not found")
     existing = db.get(models.NPCQuest, (npc_id, quest_id))
-    if existing:
-        existing.minimum_affinity = body.minimum_affinity
-        existing.minimum_trust = body.minimum_trust
-        existing.required_tags_json = body.required_tags
-        existing.blocked_tags_json = body.blocked_tags
-    else:
-        db.add(
-            models.NPCQuest(
-                npc_id=npc_id,
-                quest_id=quest_id,
-                minimum_affinity=body.minimum_affinity,
-                minimum_trust=body.minimum_trust,
-                required_tags_json=body.required_tags,
-                blocked_tags_json=body.blocked_tags,
-            )
-        )
+    if not existing:
+        db.add(models.NPCQuest(npc_id=npc_id, quest_id=quest_id))
     db.commit()
     return {"ok": True}
 

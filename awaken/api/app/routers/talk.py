@@ -1,15 +1,29 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import asyncio
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import hydra, models, schemas, simulation
-from ..db import get_db
-from ..dialogue import decide_optional_quest, generate_track_dialogue
+from ..db import SessionLocal, get_db
+from ..dialogue import generate_npc_response
 
 
 router = APIRouter(prefix="/worlds/{world_id}/npcs/{npc_id}", tags=["interactions"])
-TRACK_ORDER = ["greeting", "identity", "quest", "opinion", "world_lore"]
+TRACK_ORDER = ["greeting", "identity", "quest", "quest_status", "opinion", "world_lore"]
+
+
+def _sync_npc_in_background(npc_id: str, player_id: str) -> None:
+    """Run NPC belief sync after the response is sent, with its own DB session."""
+    db = SessionLocal()
+    try:
+        simulation.sync_npc(db, npc_id, player_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
 
 
 def _load_npc(db: Session, world_id: str, npc_id: str) -> models.NPC:
@@ -51,20 +65,34 @@ def _faction_dict(faction: models.Faction | None) -> dict:
     }
 
 
+def _quest_dict(quest: models.Quest) -> dict:
+    return {
+        "key": quest.stable_key,
+        "title": quest.title,
+        "description": quest.description,
+        "objectives": (quest.objective_json or {}).get("steps", []),
+        "essential": quest.essential,
+        "base_dialogue": quest.base_dialogue or "",
+        "hint": quest.base_hint,
+    }
+
+
 @router.get("/tracks", response_model=list[schemas.TrackOut])
 def list_tracks(world_id: str, npc_id: str, db: Session = Depends(get_db)):
     npc = _load_npc(db, world_id, npc_id)
     return [
         schemas.TrackOut(id=track_id, **npc.tracks_json[track_id])
         for track_id in TRACK_ORDER
+        if track_id in npc.tracks_json
     ]
 
 
 @router.post("/interact", response_model=schemas.InteractionResponse)
-def interact(
+async def interact(
     world_id: str,
     npc_id: str,
     body: schemas.InteractionRequest,
+    background_tasks: BackgroundTasks,
     debug: bool = Query(False),
     db: Session = Depends(get_db),
 ):
@@ -74,12 +102,7 @@ def interact(
     if track is None:
         raise HTTPException(400, "track is not configured for this NPC")
 
-    repeat_count = (
-        db.query(models.Conversation)
-        .filter_by(npc_id=npc.id, player_id=body.player_id, track_id=body.track)
-        .count()
-        + 1
-    )
+    # Log the interaction as a faction event so other NPCs can learn about it
     db.add(
         models.FactionEvent(
             world_id=world_id,
@@ -88,102 +111,89 @@ def interact(
             actor_id=body.player_id,
             target_npc_id=npc.id,
             visibility="DIRECT",
-            summary=(
-                f"The player asked {npc.name} '{track['player_text']}' "
-                f"for the {repeat_count} time."
-            ),
-            payload_json={"track_id": body.track, "repeat_count": repeat_count},
-            importance=min(0.35 + repeat_count * 0.08, 0.9),
+            summary=f"The player asked {npc.name} '{track['player_text']}'.",
+            payload_json={"track_id": body.track},
+            importance=0.4,
         )
     )
     db.commit()
 
+    # Sync NPC beliefs from unprocessed events + gossip — must complete before we
+    # read state, otherwise the debug panel and loadState() show stale values.
     simulation.sync_npc(db, npc.id, body.player_id)
+
     state = simulation.get_or_create_state(db, npc.id, body.player_id)
     state_payload = _state_dict(state)
-    context = hydra.recall_context(
+
+    # Fetch quests first so their titles enrich the recall query
+    all_quests = simulation.assigned_quests_for_npc(db, npc.id, body.player_id)
+    essential_quests = [_quest_dict(q) for q in all_quests if q.essential]
+    optional_quests = [_quest_dict(q) for q in all_quests if not q.essential]
+
+    # Build a rich recall query: what was asked + NPC role + belief summary + quest topics
+    recall_parts = [track["player_text"], f"{npc.name} {npc.role}"]
+    if state.belief_summary:
+        recall_parts.append(state.belief_summary)
+    if all_quests:
+        recall_parts.append(" ".join(q.title for q in all_quests))
+
+    # Retrieve world knowledge + this NPC's private memories from HydraDB
+    # Run in a thread so the blocking SDK call doesn't stall the event loop
+    context = await asyncio.to_thread(
+        hydra.recall_context,
         world_id,
         npc.id,
-        f"{track['player_text']} {state.belief_summary}",
-        limit=10,
+        " ".join(recall_parts),
+        12,
     )
 
-    quest = simulation.assigned_quest_for_npc(db, npc.id) if body.track == "quest" else None
-    quest_decision = None
-    quest_reason = None
-    protected_base = None
-    protected_facts = None
-    quest_payload = None
+    is_quest_track = body.track == "quest"
+    is_status_track = body.track == "quest_status"
 
-    if quest:
-        dialogue_branches = quest.quest_dialogue_json
-        player_quest = db.get(models.PlayerQuest, (body.player_id, quest.id))
-        if player_quest and player_quest.status == "COMPLETED":
-            quest_decision = "COMPLETED"
-            quest_reason = "The YAML-defined completion event has already occurred."
-        elif player_quest and player_quest.status in {"OFFERED", "ACCEPTED", "ACTIVE"}:
-            quest_decision = "ACTIVE"
-            quest_reason = "The quest has already been offered and remains incomplete."
-        elif quest.essential:
-            quest_decision = "OFFER"
-            quest_reason = "Essential quest progression cannot be blocked."
-        else:
-            decision = decide_optional_quest(
-                npc=_npc_dict(npc),
-                faction=_faction_dict(faction),
-                state=state_payload,
-                context=context,
-                quest={
-                    "key": quest.stable_key,
-                    "title": quest.title,
-                    "description": quest.description,
-                    "objectives": quest.objective_json,
-                },
-                guidance=npc.quest_rules_json.get("guidance", ""),
-            )
-            quest_decision = decision["decision"]
-            quest_reason = decision["reason"]
+    # For quest_status: build a list of assigned quests with the player's current status
+    quest_status_context = None
+    if is_status_track:
+        quest_status_context = []
+        for q in all_quests:
+            pq = db.get(models.PlayerQuest, (body.player_id, q.id))
+            quest_status_context.append({
+                **_quest_dict(q),
+                "player_status": pq.status if pq else "NOT_STARTED",
+            })
 
-        branch = {
-            "OFFER": "offered_base",
-            "REFUSE": "refused_base",
-            "ACTIVE": "active_base",
-            "COMPLETED": "completed_base",
-        }[quest_decision]
-        protected_base = dialogue_branches.get(branch)
-        protected_facts = {
-            "quest_title": quest.title,
-            "description": quest.description,
-            "objectives": quest.objective_json,
-            "hint": quest.base_hint,
-        }
-        if quest_decision == "OFFER":
-            if player_quest is None:
-                player_quest = models.PlayerQuest(
-                    player_id=body.player_id, quest_id=quest.id, status="OFFERED"
-                )
-                db.add(player_quest)
-        if player_quest is not None:
-            quest_payload = schemas.TalkQuest(
-                id=quest.id,
-                title=quest.title,
-                essential=quest.essential,
-                status=player_quest.status,
-            )
-
-    result = generate_track_dialogue(
+    # Single LLM call — NPC decides everything
+    # Run in a thread so the blocking httpx call doesn't stall the event loop
+    result = await asyncio.to_thread(
+        generate_npc_response,
         track_id=body.track,
         track=track,
         npc=_npc_dict(npc),
         faction=_faction_dict(faction),
-        state=state_payload,
+        player_state=state_payload,
         context=context,
-        repeat_count=repeat_count,
-        quest_decision=quest_decision,
-        quest_reason=quest_reason,
-        protected_base_statement=protected_base,
-        protected_quest_facts=protected_facts,
+        essential_quests=essential_quests if is_quest_track else [],
+        optional_quests=optional_quests if is_quest_track else [],
+        quest_status_context=quest_status_context,
     )
+
+    # If the LLM offered a quest, record it in PlayerQuest
+    offered_quest = None
+    quest_key_offered = result.get("quest_offered")
+    if quest_key_offered:
+        matched = next((q for q in all_quests if q.stable_key == quest_key_offered), None)
+        if matched:
+            pq = db.get(models.PlayerQuest, (body.player_id, matched.id))
+            if pq is None:
+                pq = models.PlayerQuest(
+                    player_id=body.player_id, quest_id=matched.id, status="OFFERED"
+                )
+                db.add(pq)
+            offered_quest = schemas.TalkQuest(
+                id=matched.id,
+                title=matched.title,
+                essential=matched.essential,
+                status=pq.status,
+            )
 
     conversation = models.Conversation(
         npc_id=npc.id,
@@ -200,18 +210,15 @@ def interact(
         session_id=conversation.id,
         npc_id=npc.id,
         track=body.track,
-        repeat_count=repeat_count,
         dialogue=result["dialogue"],
         tone=result["tone"],
-        quest=quest_payload,
-        quest_decision=quest_decision,
-        quest_reason=quest_reason,
-        hints_provided=result["hints_provided"],
+        quest=offered_quest,
         debug=(
             {
                 **state_payload,
                 "retrieved_context": context,
-                "protected_base_statement": protected_base,
+                "essential_quests": essential_quests,
+                "optional_quests": optional_quests,
             }
             if debug
             else None

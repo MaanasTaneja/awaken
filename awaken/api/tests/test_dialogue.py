@@ -55,6 +55,7 @@ class StructuredDialogueTests(unittest.TestCase):
             current_state={},
             events=[{"event_type": "ITEM_STOLEN"}],
             gossip=[],
+            historical_context=[],
         )
 
         response_format = post.call_args.kwargs["json"]["response_format"]

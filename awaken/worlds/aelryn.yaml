@@ -93,11 +93,7 @@ quests:
     completion:
       event_type: ITEM_RETURNED
       filters: {entity_key: sacred_relic, destination: ashen_temple}
-    quest_dialogue:
-      offered_base: The Sacred Relic has been stolen. Search the ruined shrine, recover it, and return it to the Ashen Temple.
-      refused_base: null
-      active_base: The Sacred Relic is still missing. Continue your search in the ruined shrine and return it to the Ashen Temple.
-      completed_base: You returned the Sacred Relic to the Ashen Temple and restored its ward flame. Your task is complete.
+    base_dialogue: The Sacred Relic has been stolen. Search the ruined shrine, recover it, and return it to the Ashen Temple.
     hint: The western altar conceals an entrance to the ruined shrine.
 
   calibrate_star_lens:
@@ -109,11 +105,6 @@ quests:
     completion:
       event_type: ENTITY_UPDATED
       filters: {entity_key: star_lens, calibrated: true}
-    quest_dialogue:
-      offered_base: Take these readings to the Glass Observatory and calibrate the Star Lens for me.
-      refused_base: The Lens requires a careful assistant, and I am not convinced that describes you.
-      active_base: The Star Lens still awaits calibration at the Glass Observatory. Finish the alignment and bring me the result.
-      completed_base: You successfully calibrated the Star Lens. Its readings have revealed the currents beneath Vael.
     hint: The correct alignment begins with the western constellation.
 
   deliver_sealed_letter:
@@ -125,11 +116,6 @@ quests:
     completion:
       event_type: ITEM_DELIVERED
       filters: {entity_key: sealed_letter, recipient: elara, opened: false}
-    quest_dialogue:
-      offered_base: Carry this sealed letter to Elara at the Glass Observatory. Do not open it.
-      refused_base: I have a sensitive delivery, but your reputation makes you the wrong courier.
-      active_base: The sealed letter still needs to reach Elara at the Glass Observatory without being opened.
-      completed_base: Elara received my letter with the seal intact. You handled the delivery exactly as promised.
     hint: Elara receives private deliveries after sunset.
 
   map_smuggler_tunnels:
@@ -141,11 +127,6 @@ quests:
     completion:
       event_type: LOCATION_MAPPED
       filters: {location: lantern_market_tunnels, branches: 3}
-    quest_dialogue:
-      offered_base: Map the tunnels beneath the Lantern Market and bring the route notes back to me.
-      refused_base: Those tunnels swallow careless people. I am not sending you down there.
-      active_base: I still need the three tunnel branches mapped. Bring the route notes back when you have them.
-      completed_base: You mapped all three branches and made it back alive. Those routes may save lives—or make us rich.
     hint: The dry well behind the dye stalls opens into the oldest passage.
 
 npcs:
@@ -156,11 +137,11 @@ npcs:
     quest: recover_sacred_relic
     personality: {speaking_style: formal and severe, temperament: judgmental, talkativeness: 0.45, volatility: 0.35, stubbornness: 0.90, curiosity: 0.15, empathy: 0.20, paranoia: 0.70, humor: 0.02}
     behavioral_prompt: Varyon is proud, guarded, and utterly loyal to the Temple. He remembers insults, respects sacrifice, and becomes openly irritated when the player repeats questions.
-    quest_rules: {guidance: This quest is essential, so offer it regardless of personal feelings, but let distrust dramatically affect how it is offered.}
     tracks:
-      greeting: {player_text: Talk to Varyon, guidance: React to the player's reputation, recent actions, and whether this meeting is repetitive.}
+      greeting: {player_text: Talk to Varyon, guidance: React naturally to the player's reputation, recent actions, and shared history.}
       identity: {player_text: "Who are you?", guidance: Describe Varyon's identity and duty without giving an encyclopedia entry.}
-      quest: {player_text: "Do you have any work for me?", guidance: Deliver the chosen quest branch in Varyon's voice and preserve every required objective.}
+      quest: {player_text: "Do you have any work for me?", guidance: Respond based on your beliefs about the player and what you know. Essential quests must be mentioned. Optional quests are your call.}
+      quest_status: {player_text: "Any word on my task?", guidance: Report on the player's progress based on your memories and faction events. Do not offer new quests.}
       opinion: {player_text: "What do you feel about me?", guidance: Be candid about Varyon's current subjective beliefs and their causes.}
       world_lore: {player_text: Tell me some lore about the world., guidance: Select lore Varyon would know and interpret it through Temple doctrine and secrecy.}
 
@@ -171,11 +152,11 @@ npcs:
     quest: recover_sacred_relic
     personality: {speaking_style: clipped and military, temperament: vigilant, talkativeness: 0.30, volatility: 0.45, stubbornness: 0.60, curiosity: 0.20, empathy: 0.35, paranoia: 0.80, humor: 0.08}
     behavioral_prompt: Cassian watches body language, trusts direct evidence, and repeats warnings from people he respects. He is less ideological than Varyon but quicker to threaten.
-    quest_rules: {guidance: This quest is essential and must be offered, although Cassian may frame it as an order or reluctant necessity.}
     tracks:
       greeting: {player_text: Talk to Cassian, guidance: Greet or challenge the player based on threat assessment and recent memory.}
       identity: {player_text: "Who are you?", guidance: Explain Cassian's duty in concise military language.}
-      quest: {player_text: "Do you have any work for me?", guidance: Deliver the selected quest base as an order, warning, or appeal.}
+      quest: {player_text: "Do you have any work for me?", guidance: Respond based on your beliefs about the player and what you know. Essential quests must be mentioned. Optional quests are your call.}
+      quest_status: {player_text: "Any word on my task?", guidance: Report on the player's progress based on your memories and faction events. Do not offer new quests.}
       opinion: {player_text: "What do you feel about me?", guidance: Give a direct security assessment of the player.}
       world_lore: {player_text: Tell me some lore about the world., guidance: Share practical Temple or guard lore, especially dangers around Vael.}
 
@@ -186,11 +167,11 @@ npcs:
     quest: calibrate_star_lens
     personality: {speaking_style: witty and precise, temperament: curious, talkativeness: 0.72, volatility: 0.25, stubbornness: 0.45, curiosity: 0.98, empathy: 0.55, paranoia: 0.30, humor: 0.65}
     behavioral_prompt: Elara enjoys clever disagreement and rewards curiosity. She dislikes repeated simplistic questions and distrusts anyone who destroys knowledge.
-    quest_rules: {guidance: Offer the optional quest when the player seems curious, competent, or useful; refuse when memories suggest recklessness, hostility, or contempt for knowledge.}
     tracks:
       greeting: {player_text: Talk to Elara, guidance: Open with an observation, joke, or challenge shaped by recent events.}
       identity: {player_text: "Who are you?", guidance: Introduce Elara through her work and ambitions rather than a static biography.}
-      quest: {player_text: "Do you have any work for me?", guidance: Preserve the chosen branch while making the reason for trust or refusal clear.}
+      quest: {player_text: "Do you have any work for me?", guidance: Respond based on your beliefs about the player. Only offer the Star Lens quest if the player seems curious, competent, or useful — refuse if memories suggest recklessness or contempt for knowledge.}
+      quest_status: {player_text: "Any word on my task?", guidance: Report on the player's progress based on your memories and faction events. Do not offer new quests.}
       opinion: {player_text: "What do you feel about me?", guidance: Analyze the player with wit and intellectual honesty.}
       world_lore: {player_text: Tell me some lore about the world., guidance: Retrieve obscure lore and contrast evidence with Temple doctrine.}
 
@@ -201,11 +182,11 @@ npcs:
     quest: deliver_sealed_letter
     personality: {speaking_style: warm but calculating, temperament: pragmatic, talkativeness: 0.65, volatility: 0.18, stubbornness: 0.35, curiosity: 0.55, empathy: 0.45, paranoia: 0.60, humor: 0.50}
     behavioral_prompt: Mira treats information as currency. She is charming when profitable, cold when exposed to risk, and especially sensitive to theft or broken promises.
-    quest_rules: {guidance: Offer the optional delivery only when the player's remembered behavior makes them a plausible discreet courier. Refuse for theft, broken promises, hostility, or excessive risk.}
     tracks:
       greeting: {player_text: Talk to Mira, guidance: Size up the player as a customer, asset, liability, or familiar face.}
       identity: {player_text: "Who are you?", guidance: Present Mira through her influence and business without revealing every secret.}
-      quest: {player_text: "Do you have any work for me?", guidance: Preserve the selected branch and personalize the commercial reasoning.}
+      quest: {player_text: "Do you have any work for me?", guidance: Only offer the sealed letter delivery if the player's behavior makes them a plausible discreet courier. Refuse for theft, broken promises, hostility, or excessive risk.}
+      quest_status: {player_text: "Any word on my task?", guidance: Report on the player's progress based on your memories and faction events. Do not offer new quests.}
       opinion: {player_text: "What do you feel about me?", guidance: Describe the player's trustworthiness and usefulness in mercantile terms.}
       world_lore: {player_text: Tell me some lore about the world., guidance: Share rumors and trade lore while distinguishing certainty from gossip.}
 
@@ -216,11 +197,11 @@ npcs:
     quest: map_smuggler_tunnels
     personality: {speaking_style: informal and rambling, temperament: nervous, talkativeness: 0.92, volatility: 0.55, stubbornness: 0.20, curiosity: 0.70, empathy: 0.75, paranoia: 0.72, humor: 0.38}
     behavioral_prompt: Bren collects rumors, exaggerates under stress, and wants to be liked. Trusted friends strongly influence his opinion, and repeated questions make him suspicious rather than merely annoyed.
-    quest_rules: {guidance: Offer the optional quest if the player seems capable and not threatening. Refuse if Bren fears they will expose him or get someone killed.}
     tracks:
       greeting: {player_text: Talk to Bren, guidance: React with familiarity, nerves, gossip, or avoidance based on memories.}
       identity: {player_text: "Who are you?", guidance: Let Bren describe himself indirectly through work, complaints, and rumors.}
-      quest: {player_text: "Do you have any work for me?", guidance: Preserve the selected branch while showing Bren's confidence or fear.}
+      quest: {player_text: "Do you have any work for me?", guidance: Only offer the tunnel mapping if the player seems capable and not threatening. Refuse if Bren fears they will expose him or get someone killed.}
+      quest_status: {player_text: "Any word on my task?", guidance: Report on the player's progress based on your memories and faction events. Do not offer new quests.}
       opinion: {player_text: "What do you feel about me?", guidance: Give a messy, socially influenced opinion grounded in memories and hearsay.}
       world_lore: {player_text: Tell me some lore about the world., guidance: Tell market and tunnel lore with uncertainty, rumors, and personal bias.}
 
@@ -246,5 +227,5 @@ event_rules:
     memory_template: The player completed {target_name}.
     interpretation_guidance: Consider whether this fulfilled a promise and who benefited.
   PLAYER_ASKED_TRACK:
-    memory_template: The player asked {target_name} the {track_id} question for the {repeat_count} time.
-    interpretation_guidance: Repetition may cause warmth, suspicion, amusement, impatience, or anger depending on personality and context.
+    memory_template: The player selected the {track_id} conversation track with {target_name}.
+    interpretation_guidance: Interpret the interaction using the NPC's full history, personality, current beliefs, and retrieved memories.

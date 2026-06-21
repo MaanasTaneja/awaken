@@ -16,20 +16,12 @@ class WorldDefinitionTests(unittest.TestCase):
             self.assertEqual(set(npc.tracks), TRACK_IDS)
             self.assertIn(npc.quest, definition.quests)
 
-    def test_optional_quests_have_refusal_branches(self):
+    def test_essential_quests_have_base_dialogue(self):
         definition = load_world_definition(DEFAULT_WORLD_FILE)
 
         for quest in definition.quests.values():
-            if not quest.essential:
-                self.assertTrue(quest.quest_dialogue.refused_base)
-
-    def test_every_quest_has_active_and_completed_status_dialogue(self):
-        definition = load_world_definition(DEFAULT_WORLD_FILE)
-
-        for quest in definition.quests.values():
-            self.assertTrue(quest.quest_dialogue.active_base)
-            self.assertTrue(quest.quest_dialogue.completed_base)
-
+            if quest.essential:
+                self.assertTrue(quest.base_dialogue)
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,7 +56,6 @@ class NPC(Base):
     behavior_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     personality_json: Mapped[dict] = mapped_column(JSONB, default=dict)
     tracks_json: Mapped[dict] = mapped_column(JSONB, default=dict)
-    quest_rules_json: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     base_friendliness: Mapped[int] = mapped_column(Integer, default=0)
     gossipiness: Mapped[float] = mapped_column(Float, default=0.5)
@@ -66,7 +65,7 @@ class NPC(Base):
 class NPCRelationship(Base):
     __tablename__ = "npc_relationships"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    from_npc_id: Mapped[str] = mapped_column(ForeignKey("npcs.id", ondelete="CASCADE"))
+    from_npc_id: Mapped[str] = mapped_column(ForeignKey("npcs.id", ondelete="CASCADE"), index=True)
     to_npc_id: Mapped[str] = mapped_column(ForeignKey("npcs.id", ondelete="CASCADE"))
     relationship_type: Mapped[str | None] = mapped_column(String)
     trust: Mapped[float] = mapped_column(Float, default=0.0)
@@ -139,22 +138,17 @@ class Quest(Base):
     priority: Mapped[int] = mapped_column(Integer, default=0)
 
     objective_json: Mapped[dict] = mapped_column(JSONB, default=dict)
-    base_dialogue: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # base_dialogue is only used for essential quests — the LLM must include it.
+    # Optional quests have no scripted line; the LLM decides whether to offer them.
+    base_dialogue: Mapped[str | None] = mapped_column(Text)
     base_hint: Mapped[str | None] = mapped_column(Text)
     completion_event_json: Mapped[dict] = mapped_column(JSONB, default=dict)
-    quest_dialogue_json: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
 class NPCQuest(Base):
     __tablename__ = "npc_quests"
     npc_id: Mapped[str] = mapped_column(ForeignKey("npcs.id", ondelete="CASCADE"), primary_key=True)
     quest_id: Mapped[str] = mapped_column(ForeignKey("quests.id", ondelete="CASCADE"), primary_key=True)
-
-    minimum_affinity: Mapped[int] = mapped_column(Integer, default=-100)
-    minimum_trust: Mapped[int] = mapped_column(Integer, default=-100)
-
-    required_tags_json: Mapped[list] = mapped_column(JSONB, default=list)
-    blocked_tags_json: Mapped[list] = mapped_column(JSONB, default=list)
 
 
 class PlayerQuest(Base):

@@ -19,7 +19,6 @@ def create_npc(world_id: str, body: schemas.NPCCreate, db: Session = Depends(get
         stable_key=body.name.lower().replace(" ", "_"),
         personality_json={},
         tracks_json={},
-        quest_rules_json={},
         **body.model_dump(),
     )
     db.add(n)
