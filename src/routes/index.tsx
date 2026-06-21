@@ -6,6 +6,7 @@ import { NPCPanel } from "@/components/game/NPCPanel";
 import { ActionHUD } from "@/components/game/ActionHUD";
 import { DialogueBox } from "@/components/game/DialogueBox";
 import { useNPCStates } from "@/hooks/useNPCStates";
+import { api, WorldContext } from "@/hooks/useAwakenAPI";
 import { NPCS } from "@/constants/npcs";
 
 export const Route = createFileRoute("/")({
@@ -19,10 +20,19 @@ export const Route = createFileRoute("/")({
 });
 
 function AelrynPage() {
+  const [ctx, setCtx] = useState<WorldContext | null>(null);
+  const [seedError, setSeedError] = useState(false);
   const [nearby, setNearby] = useState<string | null>(null);
   const [activeNpc, setActiveNpc] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
-  const { states, offline, changed, refreshAll, refreshOne } = useNPCStates();
+  const { states, offline, changed, refreshAll, refreshOne } = useNPCStates(ctx);
+
+  // Seed world on mount — get real world + NPC + faction UUIDs
+  useEffect(() => {
+    api.seed()
+      .then((res) => setCtx({ worldId: res.world_id, npcIds: res.npcs, factionIds: res.factions }))
+      .catch(() => setSeedError(true));
+  }, []);
 
   const onInteract = useCallback((id: string) => setActiveNpc(id), []);
 
@@ -37,6 +47,7 @@ function AelrynPage() {
 
   const activeNpcObj = activeNpc ? NPCS.find((n) => n.id === activeNpc) ?? null : null;
   const paused = activeNpc !== null;
+  const isOffline = offline || seedError;
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-black text-amber-50">
@@ -56,8 +67,8 @@ function AelrynPage() {
         </div>
       )}
 
-      <ActionHUD offline={offline} onAfterEvent={refreshAll} />
-      <NPCPanel states={states} changed={changed} offline={offline} />
+      <ActionHUD ctx={ctx} offline={isOffline} onAfterEvent={refreshAll} />
+      <NPCPanel states={states} changed={changed} offline={isOffline} />
 
       {/* Top-left title + offline toast */}
       <div className="pointer-events-none fixed left-4 top-4 z-10">
@@ -70,10 +81,13 @@ function AelrynPage() {
         <p className="mt-1 font-serif text-[10px] uppercase tracking-widest text-amber-100/60">
           WASD · Mouse Look · [E] Talk · [ESC] Free Cursor
         </p>
-        {offline && (
+        {isOffline && (
           <div className="pointer-events-auto mt-2 inline-block border border-red-700 bg-black/80 px-2 py-1 text-[10px] uppercase tracking-widest text-red-300">
             API offline — running in demo mode
           </div>
+        )}
+        {ctx && !isOffline && (
+          <div className="mt-1 text-[9px] text-emerald-600/70 uppercase tracking-widest">● API connected</div>
         )}
       </div>
 
@@ -104,7 +118,8 @@ function AelrynPage() {
       {activeNpcObj && (
         <DialogueBox
           npc={activeNpcObj}
-          offline={offline}
+          ctx={ctx}
+          offline={isOffline}
           onClose={() => setActiveNpc(null)}
           onTalk={refreshOne}
         />
