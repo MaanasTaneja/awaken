@@ -27,8 +27,8 @@ services:
 
   api:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: api/Dockerfile
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://awaken:awaken@db:5432/awaken
@@ -42,7 +42,17 @@ services:
         condition: service_healthy
     volumes:
       - ./api:/app
+      - ./worlds:/worlds:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  game:
+    image: nginx:1.27-alpine
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    volumes:
+      - ./game:/usr/share/nginx/html:ro
 
 volumes:
   awaken_pgdata:

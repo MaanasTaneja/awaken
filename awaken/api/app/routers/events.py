@@ -7,6 +7,25 @@ from ..db import get_db
 router = APIRouter(prefix="/worlds/{world_id}", tags=["events"])
 
 
+def _apply_quest_completions(db: Session, event: models.FactionEvent) -> None:
+    payload = event.payload_json or {}
+    for quest in db.query(models.Quest).filter_by(world_id=event.world_id).all():
+        rule = quest.completion_event_json or {}
+        if rule.get("event_type") != event.event_type:
+            continue
+        if any(payload.get(key) != value for key, value in (rule.get("filters") or {}).items()):
+            continue
+        player_id = event.actor_id or "player_1"
+        player_quest = db.get(models.PlayerQuest, (player_id, quest.id))
+        if player_quest is None:
+            player_quest = models.PlayerQuest(
+                player_id=player_id, quest_id=quest.id, status="COMPLETED"
+            )
+            db.add(player_quest)
+        else:
+            player_quest.status = "COMPLETED"
+
+
 @router.post("/events", response_model=schemas.EventOut)
 def create_event(world_id: str, body: schemas.EventCreate, db: Session = Depends(get_db)):
     faction = db.get(models.Faction, body.faction_id)
@@ -17,6 +36,8 @@ def create_event(world_id: str, body: schemas.EventCreate, db: Session = Depends
         **body.model_dump(),
     )
     db.add(ev)
+    db.flush()
+    _apply_quest_completions(db, ev)
     db.commit()
     db.refresh(ev)
     return ev

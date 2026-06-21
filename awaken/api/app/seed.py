@@ -1,147 +1,244 @@
-"""Seed the demo world: 1 world, 3 factions, 6 NPCs, relationships, entities, quests."""
+"""Validate a YAML world, reset its SQL runtime state, and upsert HydraDB lore."""
 from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from . import models
+from . import hydra, models
+from .config import settings
+from .world_definition import WorldDefinition, load_world_definition
 
 
-def seed_demo(db: Session) -> dict:
-    # Wipe any existing demo world named 'Aelryn'.
-    existing = db.query(models.World).filter_by(name="Aelryn").first()
+WORLD_DIR = Path(__file__).resolve().parents[2] / "worlds"
+DEFAULT_WORLD_FILE = WORLD_DIR / "aelryn.yaml"
+
+
+def _text(value: Any) -> str:
+    return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+def _knowledge_sources(definition: WorldDefinition) -> list[dict[str, Any]]:
+    world_key = definition.world.id
+    sources: list[dict[str, Any]] = [
+        {
+            "id": f"world_{world_key}",
+            "title": f"World: {definition.world.name}",
+            "type": "custom",
+            "content": {
+                "text": f"{definition.world.description}\n\nCanonical lore:\n{_text(definition.world.lore)}"
+            },
+            "additional_metadata": {"source": "world_yaml", "world_key": world_key},
+        }
+    ]
+    for key, faction in definition.factions.items():
+        sources.append(
+            {
+                "id": f"faction_{world_key}_{key}",
+                "title": f"Faction: {faction.name}",
+                "type": "custom",
+                "content": {
+                    "text": (
+                        f"{faction.description}\nLore: {_text(faction.lore)}\n"
+                        f"Beliefs: {_text(faction.beliefs)}"
+                    )
+                },
+                "additional_metadata": {
+                    "source": "faction_yaml",
+                    "world_key": world_key,
+                    "faction_key": key,
+                },
+                "relations": {"ids": [f"world_{world_key}"]},
+            }
+        )
+    for key, entity in definition.world.entities.items():
+        faction_key = entity.get("faction")
+        relation_ids = [f"world_{world_key}"]
+        if faction_key:
+            relation_ids.append(f"faction_{world_key}_{faction_key}")
+        sources.append(
+            {
+                "id": f"entity_{world_key}_{key}",
+                "title": f"Entity: {entity['name']}",
+                "type": "custom",
+                "content": {"text": _text(entity)},
+                "additional_metadata": {
+                    "source": "entity_yaml",
+                    "world_key": world_key,
+                    "entity_key": key,
+                },
+                "relations": {"ids": relation_ids},
+            }
+        )
+    for key, quest in definition.quests.items():
+        sources.append(
+            {
+                "id": f"quest_{world_key}_{key}",
+                "title": f"Quest: {quest.name}",
+                "type": "custom",
+                "content": {
+                    "text": (
+                        f"{quest.description}\nObjectives: {_text(quest.objectives)}\n"
+                        f"Completion: {_text(quest.completion.model_dump())}"
+                    )
+                },
+                "additional_metadata": {
+                    "source": "quest_yaml",
+                    "world_key": world_key,
+                    "quest_key": key,
+                    "essential": quest.essential,
+                },
+                "relations": {"ids": [f"world_{world_key}"]},
+            }
+        )
+    for key, npc in definition.npcs.items():
+        sources.append(
+            {
+                "id": f"npc_{world_key}_{key}",
+                "title": f"NPC: {npc.name}",
+                "type": "custom",
+                "content": {
+                    "text": (
+                        f"{npc.name} is the {npc.role}. {npc.behavioral_prompt}\n"
+                        f"Personality: {_text(npc.personality.model_dump())}"
+                    )
+                },
+                "additional_metadata": {
+                    "source": "npc_yaml",
+                    "world_key": world_key,
+                    "npc_key": key,
+                },
+                "relations": {
+                    "ids": [
+                        f"world_{world_key}",
+                        f"faction_{world_key}_{npc.faction}",
+                        f"quest_{world_key}_{npc.quest}",
+                    ]
+                },
+            }
+        )
+    for source in sources:
+        source["tenant_id"] = settings.hydra_tenant_id
+        source["sub_tenant_id"] = "default"
+    return sources
+
+
+def seed_demo(db: Session, path: Path = DEFAULT_WORLD_FILE) -> dict[str, Any]:
+    definition = load_world_definition(path)
+
+    existing = db.query(models.World).filter_by(stable_key=definition.world.id).first()
     if existing:
         db.delete(existing)
         db.commit()
 
-    world = models.World(name="Aelryn", description="A small kingdom on the brink.")
+    world = models.World(
+        stable_key=definition.world.id,
+        name=definition.world.name,
+        description=definition.world.description,
+        lore_json={
+            "lore": definition.world.lore,
+            "event_rules": {
+                key: value.model_dump() for key, value in definition.event_rules.items()
+            },
+        },
+    )
     db.add(world)
     db.flush()
 
-    temple = models.Faction(
-        world_id=world.id,
-        name="Ashen Temple",
-        description="A stern religious order.",
-        behavior_prompt=(
-            "The Ashen Temple values religious obedience and tradition. "
-            "It distrusts outsiders, thieves, forbidden magic, and the Mages Guild. "
-            "Its members strongly condemn the theft of sacred objects."
-        ),
-    )
-    mages = models.Faction(
-        world_id=world.id,
-        name="Mages Guild",
-        description="Curious arcanists who collect knowledge.",
-        behavior_prompt=(
-            "The Mages Guild values knowledge, experimentation, and personal liberty. "
-            "It dislikes superstition, censorship, and the Ashen Temple."
-        ),
-    )
-    merchants = models.Faction(
-        world_id=world.id,
-        name="Merchant House",
-        description="Pragmatic traders who follow the coin.",
-        behavior_prompt=(
-            "The Merchant House values profit, contracts honored, and stability. "
-            "It dislikes thieves and chaos."
-        ),
-    )
-    db.add_all([temple, mages, merchants])
+    factions: dict[str, models.Faction] = {}
+    for key, item in definition.factions.items():
+        faction = models.Faction(
+            stable_key=key,
+            world_id=world.id,
+            name=item.name,
+            description=item.description,
+            behavior_prompt=item.interpretation_prompt,
+            lore_json=item.lore,
+            beliefs_json=item.beliefs,
+        )
+        db.add(faction)
+        factions[key] = faction
     db.flush()
 
-    # --- NPCs ---
-    varyon = models.NPC(
-        world_id=world.id, faction_id=temple.id, name="Varyon", role="Priest",
-        behavior_prompt="Proud, judgmental, deeply loyal to the Temple. Distrusts the Mages Guild.",
-        base_friendliness=-10, gossipiness=0.4, stubbornness=0.8,
-    )
-    cassian = models.NPC(
-        world_id=world.id, faction_id=temple.id, name="Cassian", role="Temple Guard",
-        behavior_prompt="Vigilant, dutiful, suspicious of strangers near the relic.",
-        base_friendliness=0, gossipiness=0.6, stubbornness=0.5,
-    )
-    elara = models.NPC(
-        world_id=world.id, faction_id=mages.id, name="Elara", role="Archmage",
-        behavior_prompt="Curious, witty, dismissive of religious dogma.",
-        base_friendliness=10, gossipiness=0.7, stubbornness=0.4,
-    )
-    pell = models.NPC(
-        world_id=world.id, faction_id=mages.id, name="Pell", role="Apprentice",
-        behavior_prompt="Nervous, eager to please, hero-worships Elara.",
-        base_friendliness=20, gossipiness=0.9, stubbornness=0.2,
-    )
-    mira = models.NPC(
-        world_id=world.id, faction_id=merchants.id, name="Mira", role="Merchant",
-        behavior_prompt="Shrewd, friendly to anyone with coin, careful about thieves.",
-        base_friendliness=15, gossipiness=0.5, stubbornness=0.3,
-    )
-    bren = models.NPC(
-        world_id=world.id, faction_id=merchants.id, name="Bren", role="Serf",
-        behavior_prompt="Tired, gossipy, repeats whatever the market is saying.",
-        base_friendliness=5, gossipiness=0.95, stubbornness=0.1,
-    )
-    npcs = [varyon, cassian, elara, pell, mira, bren]
-    db.add_all(npcs)
+    quests: dict[str, models.Quest] = {}
+    for key, item in definition.quests.items():
+        quest = models.Quest(
+            stable_key=key,
+            world_id=world.id,
+            title=item.name,
+            description=item.description,
+            essential=item.essential,
+            priority=item.priority,
+            objective_json={"steps": item.objectives},
+            base_dialogue=item.quest_dialogue.offered_base,
+            base_hint=item.hint,
+            completion_event_json=item.completion.model_dump(),
+            quest_dialogue_json=item.quest_dialogue.model_dump(),
+        )
+        db.add(quest)
+        quests[key] = quest
     db.flush()
 
-    # --- Relationships (directed) ---
-    def rel(a, b, trust, affinity):
-        db.add(models.NPCRelationship(
-            from_npc_id=a.id, to_npc_id=b.id, trust=trust, affinity=affinity
-        ))
-    rel(varyon, cassian, 0.9, 0.6)
-    rel(cassian, varyon, 0.5, 0.5)
-    rel(varyon, bren, 0.2, 0.0)
-    rel(elara, pell, 0.7, 0.6)
-    rel(pell, elara, 0.95, 0.9)
-    rel(mira, bren, 0.6, 0.3)
-    rel(bren, mira, 0.4, 0.2)
-    rel(cassian, mira, 0.5, 0.2)
-
-    # --- Entities ---
-    db.add_all([
-        models.Entity(world_id=world.id, faction_id=temple.id,
-                      name="Sacred Relic", entity_type="item",
-                      state_json={"location": "temple", "stolen": False}),
-        models.Entity(world_id=world.id, faction_id=temple.id,
-                      name="Temple Door", entity_type="door",
-                      state_json={"locked": True}),
-        models.Entity(world_id=world.id, faction_id=mages.id,
-                      name="Mage's Crystal", entity_type="item",
-                      state_json={"powered": True}),
-        models.Entity(world_id=world.id, faction_id=merchants.id,
-                      name="Merchant Chest", entity_type="container",
-                      state_json={"gold": 250}),
-    ])
-
-    # --- Quests ---
-    recover = models.Quest(
-        world_id=world.id, title="Recover the Sacred Relic",
-        description="Find and return the stolen relic to the Temple.",
-        essential=True, priority=100,
-        base_dialogue="The relic must be returned. Search the ruined shrine.",
-        base_hint="A hidden entrance lies behind the western altar.",
-    )
-    deliver = models.Quest(
-        world_id=world.id, title="Deliver Sealed Letter",
-        description="Carry a sealed letter from Mira to Elara.",
-        essential=False, priority=10,
-        base_dialogue="Take this to Elara at the Mages Guild. Don't open it.",
-    )
-    db.add_all([recover, deliver])
+    npcs: dict[str, models.NPC] = {}
+    for key, item in definition.npcs.items():
+        npc = models.NPC(
+            stable_key=key,
+            world_id=world.id,
+            faction_id=factions[item.faction].id,
+            name=item.name,
+            role=item.role,
+            behavior_prompt=item.behavioral_prompt,
+            personality_json=item.personality.model_dump(),
+            tracks_json={track: value.model_dump() for track, value in item.tracks.items()},
+            quest_rules_json=item.quest_rules.model_dump(),
+            base_friendliness=0,
+            gossipiness=item.personality.talkativeness,
+            stubbornness=item.personality.stubbornness,
+        )
+        db.add(npc)
+        npcs[key] = npc
     db.flush()
 
-    db.add(models.NPCQuest(npc_id=varyon.id, quest_id=recover.id))
-    db.add(models.NPCQuest(npc_id=cassian.id, quest_id=recover.id))
-    db.add(models.NPCQuest(
-        npc_id=mira.id, quest_id=deliver.id,
-        minimum_affinity=10, minimum_trust=0,
-        blocked_tags_json=["PLAYER_MAY_BE_THIEF", "PLAYER_IS_THIEF"],
-    ))
+    for key, item in definition.world.entities.items():
+        faction = factions.get(item.get("faction"))
+        db.add(
+            models.Entity(
+                stable_key=key,
+                world_id=world.id,
+                faction_id=faction.id if faction else None,
+                name=item["name"],
+                entity_type=item["entity_type"],
+                state_json={
+                    "description": item.get("description", ""),
+                    **item.get("initial_state", {}),
+                },
+            )
+        )
+
+    for key, item in definition.npcs.items():
+        db.add(models.NPCQuest(npc_id=npcs[key].id, quest_id=quests[item.quest].id))
+
+    for item in definition.relationships:
+        db.add(
+            models.NPCRelationship(
+                from_npc_id=npcs[item.from_npc].id,
+                to_npc_id=npcs[item.to_npc].id,
+                relationship_type=item.relationship_type,
+                trust=item.trust,
+                affinity=item.affinity,
+            )
+        )
 
     db.commit()
+    knowledge_ids = hydra.store_world_knowledge(_knowledge_sources(definition))
     return {
+        "definition": str(path.name),
         "world_id": world.id,
-        "factions": [temple.id, mages.id, merchants.id],
-        "npcs": {n.name: n.id for n in npcs},
-        "quests": {recover.title: recover.id, deliver.title: deliver.id},
+        "world_key": world.stable_key,
+        "factions": {key: value.id for key, value in factions.items()},
+        "npcs": {key: value.id for key, value in npcs.items()},
+        "quests": {key: value.id for key, value in quests.items()},
+        "hydra_knowledge_ids": knowledge_ids,
     }

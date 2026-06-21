@@ -12,10 +12,13 @@ def create_faction(world_id: str, body: schemas.FactionCreate, db: Session = Dep
     if not db.get(models.World, world_id):
         raise HTTPException(404, "world not found")
     f = models.Faction(
+        stable_key=body.name.lower().replace(" ", "_"),
         world_id=world_id,
         name=body.name,
         description=body.description,
         behavior_prompt=body.behavior_prompt,
+        lore_json=[],
+        beliefs_json={},
     )
     db.add(f)
     db.commit()

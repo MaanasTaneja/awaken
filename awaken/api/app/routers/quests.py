@@ -11,7 +11,18 @@ router = APIRouter(prefix="/worlds/{world_id}", tags=["quests"])
 def create_quest(world_id: str, body: schemas.QuestCreate, db: Session = Depends(get_db)):
     if not db.get(models.World, world_id):
         raise HTTPException(404, "world not found")
-    q = models.Quest(world_id=world_id, **body.model_dump())
+    q = models.Quest(
+        world_id=world_id,
+        stable_key=body.title.lower().replace(" ", "_"),
+        completion_event_json={},
+        quest_dialogue_json={
+            "offered_base": body.base_dialogue,
+            "refused_base": None,
+            "active_base": body.base_dialogue,
+            "completed_base": "You completed this task.",
+        },
+        **body.model_dump(),
+    )
     db.add(q)
     db.commit()
     db.refresh(q)

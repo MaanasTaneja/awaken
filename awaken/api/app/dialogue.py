@@ -1,9 +1,4 @@
-"""LLM-backed belief updates and dialogue.
-
-Both functions degrade gracefully when ``OPENAI_API_KEY`` is not set, so the
-API works end-to-end out of the box (useful for local dev and CI). Swap the
-stubs for real model calls when wiring an LLM provider.
-"""
+"""Strictly structured belief interpretation and track-based NPC dialogue."""
 from __future__ import annotations
 
 import json
@@ -14,13 +9,90 @@ import httpx
 from .config import settings
 
 
+def _object(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required or list(properties),
+        "additionalProperties": False,
+    }
+
+
+MEMORY_SCHEMA = _object(
+    {
+        "text": {"type": "string"},
+        "importance": {"type": "number"},
+        "source": {"type": "string"},
+    }
+)
+
+BELIEF_SCHEMA = _object(
+    {
+        "affinity_delta": {"type": "integer"},
+        "trust_delta": {"type": "integer"},
+        "fear_delta": {"type": "integer"},
+        "respect_delta": {"type": "integer"},
+        "add_belief_tags": {"type": "array", "items": {"type": "string"}},
+        "remove_belief_tags": {"type": "array", "items": {"type": "string"}},
+        "belief_summary": {"type": "string"},
+        "memories": {"type": "array", "items": MEMORY_SCHEMA},
+    }
+)
+
+QUEST_DECISION_SCHEMA = _object(
+    {
+        "decision": {"type": "string", "enum": ["OFFER", "REFUSE"]},
+        "reason": {"type": "string"},
+    }
+)
+
+DIALOGUE_SCHEMA = _object(
+    {
+        "dialogue": {"type": "string"},
+        "tone": {
+            "type": "string",
+            "enum": ["warm", "neutral", "cold", "hostile", "afraid", "amused", "guarded"],
+        },
+        "event_summary": {"type": "string"},
+        "hints_provided": {"type": "array", "items": {"type": "string"}},
+    }
+)
+
+
 def _clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, value))
 
 
-# --------------------------------------------------------------------------- #
-# Belief update
-# --------------------------------------------------------------------------- #
+def _openai_structured(
+    *, name: str, schema: dict[str, Any], system: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for emergent belief and dialogue generation")
+    response = httpx.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": settings.openai_model,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": name, "strict": True, "schema": schema},
+            },
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        },
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    message = response.json()["choices"][0]["message"]
+    if message.get("refusal"):
+        raise RuntimeError(f"Model refused structured generation: {message['refusal']}")
+    return json.loads(message["content"])
+
 
 def form_npc_beliefs(
     *,
@@ -30,236 +102,98 @@ def form_npc_beliefs(
     events: list[dict[str, Any]],
     gossip: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Return a structured belief update for the NPC.
-
-    Shape:
-        {
-          "affinity_delta": int,
-          "trust_delta": int,
-          "fear_delta": int,
-          "respect_delta": int,
-          "add_belief_tags": [str],
-          "remove_belief_tags": [str],
-          "belief_summary": str,
-          "memories": [{text, importance, source}],
-        }
-    """
-    if settings.openai_api_key:
-        return _llm_form_beliefs(npc, faction, current_state, events, gossip)
-    return _stub_form_beliefs(npc, current_state, events, gossip)
-
-
-def _stub_form_beliefs(npc, current_state, events, gossip) -> dict[str, Any]:
-    aff = trust = fear = respect = 0
-    add_tags: list[str] = []
-    memories: list[dict[str, Any]] = []
-
-    for ev in events:
-        t = ev.get("event_type", "")
-        summary = ev.get("summary", "")
-        if t == "ITEM_STOLEN":
-            aff -= 15
-            trust -= 20
-            add_tags.append("PLAYER_MAY_BE_THIEF")
-        elif t == "QUEST_COMPLETED":
-            aff += 10
-            trust += 8
-            respect += 5
-        elif t == "PLAYER_HELPED":
-            aff += 8
-            trust += 6
-        elif t == "PLAYER_ATTACKED":
-            aff -= 25
-            fear += 15
-            add_tags.append("PLAYER_IS_HOSTILE")
-        memories.append(
-            {"text": summary, "importance": ev.get("importance", 0.5), "source": "event"}
-        )
-
-    for g in gossip:
-        weight = float(g.get("trust", 0)) * 0.5
-        if "thief" in (g.get("belief_summary") or "").lower():
-            trust -= int(10 * weight)
-            add_tags.append("HEARSAY_THIEF")
-        memories.append(
-            {
-                "text": f"Heard from a contact: {g.get('belief_summary','')}",
-                "importance": 0.3,
-                "source": "gossip",
-            }
-        )
-
-    summary = (current_state.get("belief_summary") or "") or (
-        f"{npc.get('name','The NPC')} has not yet formed strong opinions about the player."
-    )
-    if add_tags:
-        summary = f"{npc.get('name','NPC')} now suspects: {', '.join(sorted(set(add_tags)))}."
-
-    return {
-        "affinity_delta": _clamp(aff, -20, 20),
-        "trust_delta": _clamp(trust, -20, 20),
-        "fear_delta": _clamp(fear, -20, 20),
-        "respect_delta": _clamp(respect, -20, 20),
-        "add_belief_tags": sorted(set(add_tags)),
-        "remove_belief_tags": [],
-        "belief_summary": summary,
-        "memories": memories,
-    }
-
-
-def _llm_form_beliefs(npc, faction, current_state, events, gossip) -> dict[str, Any]:
-    system = (
-        "You update the internal beliefs of an RPG NPC. "
-        "Return STRICT JSON only, no prose."
-    )
-    user = json.dumps(
-        {
-            "npc": {
-                "name": npc.get("name"),
-                "role": npc.get("role"),
-                "behavior_prompt": npc.get("behavior_prompt"),
-            },
-            "faction": {
-                "name": faction.get("name"),
-                "behavior_prompt": faction.get("behavior_prompt"),
-            },
+    result = _openai_structured(
+        name="npc_belief_update",
+        schema=BELIEF_SCHEMA,
+        system=(
+            "You are the private belief processor for an RPG NPC. Interpret events subjectively through "
+            "the NPC's personality, faction worldview, existing beliefs, and trusted hearsay. Be willing "
+            "to form surprising, biased, mistaken, forgiving, obsessive, or contradictory opinions when "
+            "the context supports them. Repeated questions may cause affection, suspicion, amusement, or "
+            "anger. Deltas must each be between -20 and 20. Memories are subjective interpretations, not "
+            "copies of every event. Never place output inside a schema or wrapper object."
+        ),
+        payload={
+            "npc": npc,
+            "faction": faction,
             "current_state": current_state,
             "new_events": events,
-            "hearsay": gossip,
-            "schema": {
-                "affinity_delta": "int in [-20,20]",
-                "trust_delta": "int in [-20,20]",
-                "fear_delta": "int in [-20,20]",
-                "respect_delta": "int in [-20,20]",
-                "add_belief_tags": "list[str]",
-                "remove_belief_tags": "list[str]",
-                "belief_summary": "str",
-                "memories": "list[{text,importance,source}]",
-            },
-        }
+            "trusted_hearsay": gossip,
+        },
     )
-    data = _openai_json(system, user)
-    # Defensive clamping happens at the caller too.
-    for k in ("affinity_delta", "trust_delta", "fear_delta", "respect_delta"):
-        data[k] = _clamp(int(data.get(k, 0)), -20, 20)
-    data.setdefault("add_belief_tags", [])
-    data.setdefault("remove_belief_tags", [])
-    data.setdefault("belief_summary", "")
-    data.setdefault("memories", [])
-    return data
+    for key in ("affinity_delta", "trust_delta", "fear_delta", "respect_delta"):
+        result[key] = _clamp(int(result[key]), -20, 20)
+    for memory in result["memories"]:
+        memory["importance"] = max(0.0, min(1.0, float(memory["importance"])))
+    return result
 
 
-# --------------------------------------------------------------------------- #
-# Dialogue
-# --------------------------------------------------------------------------- #
-
-def generate_dialogue(
+def decide_optional_quest(
     *,
     npc: dict[str, Any],
     faction: dict[str, Any],
     state: dict[str, Any],
-    memories: list[dict[str, Any]],
-    player_message: str | None,
-    quest: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if settings.openai_api_key:
-        return _llm_generate_dialogue(npc, faction, state, memories, player_message, quest)
-    return _stub_generate_dialogue(npc, state, player_message, quest)
-
-
-def _tone_for(state: dict[str, Any]) -> str:
-    aff = state.get("affinity", 0)
-    fear = state.get("fear", 0)
-    if fear >= 40:
-        return "afraid"
-    if aff >= 30:
-        return "friendly"
-    if aff <= -30:
-        return "hostile"
-    if aff <= -10:
-        return "cold"
-    return "neutral"
-
-
-def _stub_generate_dialogue(npc, state, player_message, quest) -> dict[str, Any]:
-    tone = _tone_for(state)
-    name = npc.get("name", "The NPC")
-
-    if player_message is None:
-        opener = {
-            "friendly": f"{name} smiles warmly. \"Ah, good to see you again.\"",
-            "neutral": f"{name} nods. \"What brings you here?\"",
-            "cold": f"{name} barely looks up. \"Make it quick.\"",
-            "hostile": f"{name} glares. \"You. I had hoped never to see you again.\"",
-            "afraid": f"{name} flinches. \"P–please, I want no trouble.\"",
-        }[tone]
-        dialogue = opener
-    else:
-        dialogue = {
-            "friendly": f"\"Of course. {quest['title']}\" — happy to help." if quest else "\"Glad to talk.\"",
-            "neutral": f"\"There is work: {quest['title']}.\"" if quest else "\"I have nothing for you.\"",
-            "cold": f"\"Fine. {quest['title']}. Don't expect more.\"" if quest else "\"No work for the likes of you.\"",
-            "hostile": f"\"I have no choice but to involve you. {quest['title']}.\"" if quest else "\"Leave.\"",
-            "afraid": f"\"Just… just do this and go. {quest['title']}.\"" if quest else "\"Please leave me alone.\"",
-        }[tone]
-
-    return {
-        "dialogue": dialogue,
-        "tone": tone,
-        "event_summary": f"The player spoke with {name}.",
-        "mentioned_quest": quest is not None,
-        "hints_provided": [],
-    }
-
-
-def _llm_generate_dialogue(npc, faction, state, memories, player_message, quest) -> dict[str, Any]:
-    system = (
-        "You are generating dialogue for an RPG NPC. You may alter tone, style, "
-        "politeness, and optional hints. You may NOT change quest objectives, "
-        "rewards, required locations, characters, essential quest availability, "
-        "or established world facts. Return STRICT JSON only."
-    )
-    user = json.dumps(
-        {
+    context: list[dict[str, Any]],
+    quest: dict[str, Any],
+    guidance: str,
+) -> dict[str, str]:
+    return _openai_structured(
+        name="optional_quest_decision",
+        schema=QUEST_DECISION_SCHEMA,
+        system=(
+            "Decide whether this NPC willingly entrusts the player with an optional quest. This is a "
+            "subjective character decision, not a numeric threshold check. Use personality, faction, "
+            "beliefs, memories, hearsay, risk, and quest sensitivity. Return OFFER or REFUSE and the NPC's reason."
+        ),
+        payload={
             "npc": npc,
             "faction": faction,
-            "state": state,
-            "memories": memories,
-            "player_message": player_message,
+            "player_state": state,
+            "retrieved_context": context,
             "quest": quest,
-            "schema": {
-                "dialogue": "str",
-                "tone": "friendly|neutral|cold|hostile|afraid",
-                "event_summary": "str",
-                "mentioned_quest": "bool",
-                "hints_provided": "list[str]",
-            },
-        }
-    )
-    return _openai_json(system, user)
-
-
-# --------------------------------------------------------------------------- #
-# OpenAI helper (chat completions, JSON mode)
-# --------------------------------------------------------------------------- #
-
-def _openai_json(system: str, user: str) -> dict[str, Any]:
-    resp = httpx.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {settings.openai_api_key}",
-            "Content-Type": "application/json",
+            "npc_specific_guidance": guidance,
         },
-        json={
-            "model": settings.openai_model,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        },
-        timeout=60.0,
     )
-    resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-    return json.loads(content)
+
+
+def generate_track_dialogue(
+    *,
+    track_id: str,
+    track: dict[str, Any],
+    npc: dict[str, Any],
+    faction: dict[str, Any],
+    state: dict[str, Any],
+    context: list[dict[str, Any]],
+    repeat_count: int,
+    quest_decision: str | None,
+    quest_reason: str | None,
+    protected_base_statement: str | None,
+    protected_quest_facts: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return _openai_structured(
+        name="npc_track_dialogue",
+        schema=DIALOGUE_SCHEMA,
+        system=(
+            "Generate one in-character RPG NPC response for the selected interaction track. The response "
+            "should feel emergent and may be warm, evasive, irritated, funny, hostile, frightened, biased, "
+            "or unexpectedly compassionate. Ground it in retrieved world knowledge and private memories. "
+            "The player selected a fixed track; do not answer a different track. If a protected base statement "
+            "is supplied, preserve its quest decision, objectives, people, items, and locations exactly while "
+            "personalizing how the NPC delivers it. Never reverse OFFER, REFUSE, ACTIVE, or COMPLETED lifecycle "
+            "state, and never describe a completed quest as unfinished. Repetition count matters: the "
+            "NPC can explicitly react to being asked again according to personality. Do not invent canonical lore."
+        ),
+        payload={
+            "track_id": track_id,
+            "track_definition": track,
+            "repeat_count": repeat_count,
+            "npc": npc,
+            "faction": faction,
+            "player_state": state,
+            "retrieved_world_knowledge_and_memories": context,
+            "quest_decision": quest_decision,
+            "quest_reason": quest_reason,
+            "protected_base_statement": protected_base_statement,
+            "protected_quest_facts": protected_quest_facts,
+        },
+    )

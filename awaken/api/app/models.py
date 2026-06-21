@@ -26,28 +26,37 @@ def _uuid() -> str:
 class World(Base):
     __tablename__ = "worlds"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    stable_key: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    lore_json: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Faction(Base):
     __tablename__ = "factions"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    stable_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
     world_id: Mapped[str] = mapped_column(ForeignKey("worlds.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     behavior_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    lore_json: Mapped[list] = mapped_column(JSONB, default=list)
+    beliefs_json: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
 class NPC(Base):
     __tablename__ = "npcs"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    stable_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
     world_id: Mapped[str] = mapped_column(ForeignKey("worlds.id", ondelete="CASCADE"))
     faction_id: Mapped[str] = mapped_column(ForeignKey("factions.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String, nullable=False)
     role: Mapped[str] = mapped_column(String, nullable=False, default="")
     behavior_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    personality_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    tracks_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    quest_rules_json: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     base_friendliness: Mapped[int] = mapped_column(Integer, default=0)
     gossipiness: Mapped[float] = mapped_column(Float, default=0.5)
@@ -67,6 +76,7 @@ class NPCRelationship(Base):
 class Entity(Base):
     __tablename__ = "entities"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    stable_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
     world_id: Mapped[str] = mapped_column(ForeignKey("worlds.id", ondelete="CASCADE"))
     faction_id: Mapped[str | None] = mapped_column(ForeignKey("factions.id", ondelete="SET NULL"))
     name: Mapped[str] = mapped_column(String, nullable=False)
@@ -120,6 +130,7 @@ class NPCPlayerState(Base):
 class Quest(Base):
     __tablename__ = "quests"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    stable_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
     world_id: Mapped[str] = mapped_column(ForeignKey("worlds.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -130,6 +141,8 @@ class Quest(Base):
     objective_json: Mapped[dict] = mapped_column(JSONB, default=dict)
     base_dialogue: Mapped[str] = mapped_column(Text, nullable=False, default="")
     base_hint: Mapped[str | None] = mapped_column(Text)
+    completion_event_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+    quest_dialogue_json: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
 class NPCQuest(Base):
@@ -156,6 +169,7 @@ class Conversation(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     npc_id: Mapped[str] = mapped_column(ForeignKey("npcs.id", ondelete="CASCADE"), index=True)
     player_id: Mapped[str] = mapped_column(String, index=True)
+    track_id: Mapped[str | None] = mapped_column(String, index=True)
     player_message: Mapped[str | None] = mapped_column(Text)
     npc_response: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
