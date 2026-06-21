@@ -135,8 +135,11 @@ def seed_demo(db: Session, path: Path = DEFAULT_WORLD_FILE) -> dict[str, Any]:
         old_npc_ids = [n.id for n in db.query(models.NPC).filter_by(world_id=existing.id).all()]
         old_knowledge_ids = [src["id"] for src in _knowledge_sources(definition)]
         hydra.clear_world_context(existing.id, old_npc_ids, old_knowledge_ids)
-        db.delete(existing)
+        # Use a query-based delete to bypass ORM identity-map tracking issues.
+        # ON DELETE CASCADE handles all child rows at the DB level.
+        db.query(models.World).filter_by(stable_key=definition.world.id).delete(synchronize_session=False)
         db.commit()
+        db.expire_all()
 
     world = models.World(
         stable_key=definition.world.id,
