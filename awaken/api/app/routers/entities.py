@@ -11,7 +11,11 @@ router = APIRouter(prefix="/worlds/{world_id}/entities", tags=["entities"])
 def create_entity(world_id: str, body: schemas.EntityCreate, db: Session = Depends(get_db)):
     if not db.get(models.World, world_id):
         raise HTTPException(404, "world not found")
-    e = models.Entity(world_id=world_id, **body.model_dump())
+    e = models.Entity(
+        world_id=world_id,
+        stable_key=body.name.lower().replace(" ", "_"),
+        **body.model_dump(),
+    )
     db.add(e)
     db.commit()
     db.refresh(e)

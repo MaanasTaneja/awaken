@@ -1,4 +1,4 @@
-"""NPC sync loop: read unprocessed faction events + trusted friends' beliefs,
+"""NPC sync loop: read unprocessed faction events + configured relationships' beliefs,
 ask the LLM to form an updated belief, write it back to SQL, store narrative
 memories in HydraDB, advance the cursor.
 """
@@ -54,28 +54,35 @@ def unprocessed_events(
     return list(db.scalars(stmt))
 
 
-def friend_beliefs(db: Session, npc: models.NPC, top_k: int = 2, min_trust: float = 0.4):
+def relationship_beliefs(db: Session, npc: models.NPC, player_id: str):
+    """Return hearsay only from explicitly authored directed relationships.
+
+    There is deliberately no trust cutoff or top-k rule here. Relationship type,
+    trust, and affinity are context for the belief model, which decides whether
+    this NPC accepts, doubts, resents, or ignores what the other NPC believes.
+    """
     rels = list(
         db.scalars(
             select(models.NPCRelationship)
-            .where(
-                models.NPCRelationship.from_npc_id == npc.id,
-                models.NPCRelationship.trust >= min_trust,
-            )
+            .where(models.NPCRelationship.from_npc_id == npc.id)
             .order_by(models.NPCRelationship.trust.desc())
-            .limit(top_k)
         )
     )
     out = []
     for r in rels:
-        st = db.get(models.NPCPlayerState, (r.to_npc_id, "player_1"))
-        if st is None:
+        st = db.get(models.NPCPlayerState, (r.to_npc_id, player_id))
+        source_npc = db.get(models.NPC, r.to_npc_id)
+        if st is None or not st.belief_summary:
             continue
         out.append(
             {
-                "source_npc": r.to_npc_id,
+                "source_npc_id": r.to_npc_id,
+                "source_npc_name": source_npc.name if source_npc else r.to_npc_id,
+                "relationship_type": r.relationship_type,
                 "trust": r.trust,
+                "affinity": r.affinity,
                 "belief_summary": st.belief_summary,
+                "belief_tags": st.belief_tags_json or [],
             }
         )
     return out
@@ -86,11 +93,12 @@ def sync_npc(db: Session, npc_id: str, player_id: str = "player_1") -> dict[str,
     if npc is None:
         raise ValueError(f"NPC {npc_id} not found")
     faction = db.get(models.Faction, npc.faction_id)
+    world = db.get(models.World, npc.world_id)
     state = get_or_create_state(db, npc.id, player_id)
     cursor = get_or_create_cursor(db, npc.id)
 
     events = unprocessed_events(db, npc, cursor.last_processed_event_id)
-    gossip = friend_beliefs(db, npc)
+    gossip = relationship_beliefs(db, npc, player_id)
 
     event_dicts = [
         {
@@ -100,6 +108,14 @@ def sync_npc(db: Session, npc_id: str, player_id: str = "player_1") -> dict[str,
             "target_id": e.target_id,
             "summary": e.summary,
             "importance": e.importance,
+            "payload": e.payload_json or {},
+            "interpretation_guidance": (
+                ((world.lore_json or {}).get("event_rules") or {})
+                .get(e.event_type, {})
+                .get("interpretation_guidance", "")
+                if world
+                else ""
+            ),
         }
         for e in events
     ]
@@ -115,15 +131,34 @@ def sync_npc(db: Session, npc_id: str, player_id: str = "player_1") -> dict[str,
     if not events and not gossip:
         return {"npc_id": npc.id, "events_processed": 0, "state": current}
 
+    # Objective episodic memory never depends on model behavior. Stable Hydra IDs
+    # make retries idempotent if interpretation fails later in this sync.
+    hydra.store_memories(
+        npc.world_id,
+        npc.id,
+        [
+            {
+                "text": event["summary"],
+                "importance": event["importance"],
+                "source": f"observed_event:{event['id']}",
+            }
+            for event in event_dicts
+        ],
+    )
+
     update = form_npc_beliefs(
         npc={
+            "key": npc.stable_key,
             "name": npc.name,
             "role": npc.role,
             "behavior_prompt": npc.behavior_prompt,
+            "personality": npc.personality_json,
         },
         faction={
             "name": faction.name if faction else "",
             "behavior_prompt": faction.behavior_prompt if faction else "",
+            "beliefs": faction.beliefs_json if faction else {},
+            "lore": faction.lore_json if faction else [],
         },
         current_state=current,
         events=event_dicts,
@@ -145,7 +180,7 @@ def sync_npc(db: Session, npc_id: str, player_id: str = "player_1") -> dict[str,
     if events:
         cursor.last_processed_event_id = events[-1].id
 
-    hydra.store_memories(npc.world_id, npc.id, update.get("memories", []) or [])
+    hydra.store_memories(npc.world_id, npc.id, update["memories"])
 
     db.flush()
     return {
@@ -202,3 +237,11 @@ def select_quest_for_npc(
         return None
     eligible.sort(key=lambda pair: (pair[0].essential, pair[0].priority), reverse=True)
     return eligible[0][0]
+
+
+def assigned_quest_for_npc(db: Session, npc_id: str) -> models.Quest | None:
+    """Return the NPC's authored quest regardless of the player's lifecycle state."""
+    assignment = db.scalars(
+        select(models.NPCQuest).where(models.NPCQuest.npc_id == npc_id).limit(1)
+    ).first()
+    return db.get(models.Quest, assignment.quest_id) if assignment else None

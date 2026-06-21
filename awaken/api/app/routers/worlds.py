@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -9,7 +11,12 @@ router = APIRouter(prefix="/worlds", tags=["worlds"])
 
 @router.post("", response_model=schemas.WorldOut)
 def create_world(body: schemas.WorldCreate, db: Session = Depends(get_db)):
-    w = models.World(name=body.name, description=body.description)
+    w = models.World(
+        stable_key=f"world_{uuid.uuid4().hex}",
+        name=body.name,
+        description=body.description,
+        lore_json={},
+    )
     db.add(w)
     db.commit()
     db.refresh(w)

@@ -2,6 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from . import hydra
 from .db import get_db, init_db
 from .routers import entities, events, factions, npcs, quests, relationships, talk, worlds
 from .seed import seed_demo
@@ -19,6 +20,7 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    hydra.validate_connection()
 
 
 @app.get("/")

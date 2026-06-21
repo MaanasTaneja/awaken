@@ -202,13 +202,7 @@ class NPCQuestAssign(BaseModel):
     blocked_tags: list[str] = Field(default_factory=list)
 
 
-# ---------- Talk ----------
-
-class TalkRequest(BaseModel):
-    player_id: str = "player_1"
-    message: str | None = None
-    session_id: str | None = None
-
+# ---------- Interactions ----------
 
 class TalkQuest(BaseModel):
     id: str
@@ -217,12 +211,30 @@ class TalkQuest(BaseModel):
     status: str
 
 
-class TalkResponse(BaseModel):
+TrackId = Literal["greeting", "identity", "quest", "opinion", "world_lore"]
+
+
+class TrackOut(BaseModel):
+    id: TrackId
+    player_text: str
+    guidance: str
+
+
+class InteractionRequest(BaseModel):
+    player_id: str = "player_1"
+    track: TrackId
+
+
+class InteractionResponse(BaseModel):
     session_id: str
     npc_id: str
+    track: TrackId
+    repeat_count: int
     dialogue: str
     tone: str
     quest: TalkQuest | None = None
+    quest_decision: str | None = None
+    quest_reason: str | None = None
     hints_provided: list[str] = Field(default_factory=list)
     debug: dict[str, Any] | None = None
 

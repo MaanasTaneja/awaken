@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Awaken Track Tester</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config={theme:{extend:{colors:{ink:"#171a17",paper:"#eee7d5",moss:"#365c43",ember:"#a7442f",gold:"#c69b43"}}}}</script>
+    <style>
+      body{background:radial-gradient(circle at top,#faf5e7,#dfd2b8 60%,#c7b795);min-height:100vh}.scroll::-webkit-scrollbar{width:7px}.scroll::-webkit-scrollbar-thumb{background:#8d8067;border-radius:10px}
+    </style>
+  </head>
+  <body class="text-ink antialiased">
+    <div class="mx-auto max-w-[1500px] p-4 md:p-6">
+      <header class="mb-5 flex flex-col gap-4 rounded-2xl bg-ink p-5 text-paper shadow-xl md:flex-row md:items-center md:justify-between">
+        <div><p class="text-xs font-black uppercase tracking-[.3em] text-gold">YAML world · SQL state · HydraDB context</p><h1 class="mt-1 text-3xl font-black">Awaken Track Tester</h1><p id="world" class="mt-1 text-sm text-white/55">Seed the YAML world to begin.</p></div>
+        <div class="flex flex-wrap gap-2"><span id="health" class="rounded-lg bg-white/10 px-3 py-2 text-sm">Checking API…</span><button id="seed" class="rounded-lg bg-gold px-4 py-2 font-black text-ink">Seed / Reset YAML World</button><button id="refresh" class="rounded-lg border border-white/20 px-4 py-2 font-bold">Refresh</button></div>
+      </header>
+      <div id="notice" class="mb-5 hidden rounded-xl border px-4 py-3 text-sm font-bold"></div>
+
+      <main class="grid gap-5 xl:grid-cols-[260px_minmax(0,1fr)_380px]">
+        <aside class="rounded-2xl border border-black/10 bg-white/70 p-4 shadow-lg backdrop-blur">
+          <div class="mb-3 flex justify-between"><h2 class="font-black uppercase tracking-wider">NPCs</h2><span id="npc-count" class="rounded-full bg-ink px-2 py-1 text-xs text-white">0</span></div>
+          <div id="npcs" class="space-y-2"><p class="text-sm text-black/45">No world loaded.</p></div>
+        </aside>
+
+        <section class="space-y-5">
+          <div class="rounded-2xl border border-black/10 bg-white/75 p-5 shadow-lg backdrop-blur">
+            <div class="flex flex-col gap-3 md:flex-row md:justify-between">
+              <div><p id="faction" class="text-xs font-black uppercase tracking-[.22em] text-ember">No faction</p><h2 id="npc-name" class="mt-1 text-3xl font-black">Select an NPC</h2><p id="role" class="text-sm text-black/55"></p></div>
+              <span class="h-fit rounded-lg bg-moss/10 px-3 py-2 text-xs font-bold text-moss">Unseen events sync automatically before every response</span>
+            </div>
+            <div class="mt-5"><p class="mb-2 text-xs font-black uppercase tracking-wider text-black/45">Available interaction tracks</p><div id="tracks" class="grid gap-2 sm:grid-cols-2"></div></div>
+            <div id="response" class="mt-5 hidden rounded-xl border border-moss/25 bg-moss/10 p-4">
+              <div class="flex flex-wrap items-center justify-between gap-2"><span id="response-track" class="text-xs font-black uppercase tracking-wider text-moss"></span><div class="flex gap-2"><span id="repeat" class="rounded-full bg-white px-2 py-1 text-xs font-bold"></span><span id="tone" class="rounded-full bg-white px-2 py-1 text-xs font-bold"></span></div></div>
+              <p id="dialogue" class="mt-3 text-lg leading-8"></p>
+              <div id="quest-result" class="mt-3 hidden rounded-lg border border-gold/40 bg-gold/15 p-3 text-sm"></div>
+            </div>
+          </div>
+
+          <div class="grid gap-5 lg:grid-cols-2">
+            <div class="rounded-2xl border border-black/10 bg-white/75 p-5 shadow-lg"><div class="flex justify-between"><h2 class="font-black uppercase tracking-wider">Beliefs about player</h2><button id="load-state" class="text-xs font-black text-moss underline">Reload</button></div><div id="metrics" class="mt-4 space-y-3"></div><div id="tags" class="mt-4 flex flex-wrap gap-2"></div><p id="summary" class="mt-4 text-sm italic leading-6 text-black/60">No beliefs yet.</p></div>
+            <div class="rounded-2xl border border-black/10 bg-white/75 p-5 shadow-lg"><div class="flex justify-between"><h2 class="font-black uppercase tracking-wider">HydraDB memories</h2><button id="recall" class="text-xs font-black text-moss underline">Recall</button></div><input id="memory-query" class="mt-4 w-full rounded-lg border border-black/20 bg-white px-3 py-2 text-sm" value="What does this NPC remember about the player?"/><div id="memories" class="scroll mt-3 max-h-72 space-y-2 overflow-auto"><p class="text-sm text-black/45">No recall performed.</p></div></div>
+          </div>
+
+          <div class="rounded-2xl border border-black/10 bg-white/75 p-5 shadow-lg">
+            <h2 class="font-black uppercase tracking-wider">World events</h2><p class="mt-1 text-xs text-black/45">Emit an event, then select any track. The NPC processes unseen events before answering, and objective memory is stored even if interpretation fails.</p>
+            <div class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <button data-event="steal" class="event rounded-xl border border-ember/30 bg-ember/10 p-3 text-left"><b class="block">Steal Sacred Relic</b><span class="text-xs text-black/50">Temple · ITEM_STOLEN</span></button>
+              <button data-event="help" class="event rounded-xl border border-moss/30 bg-moss/10 p-3 text-left"><b class="block">Help selected faction</b><span class="text-xs text-black/50">PLAYER_HELPED</span></button>
+              <button data-event="attack" class="event rounded-xl border border-red-300 bg-red-100 p-3 text-left"><b class="block">Attack selected NPC</b><span class="text-xs text-black/50">PLAYER_ATTACKED</span></button>
+              <button data-event="return_relic" class="event rounded-xl border border-gold/40 bg-gold/10 p-3 text-left"><b class="block">Return Sacred Relic</b><span class="text-xs text-black/50">Completes essential quest</span></button>
+              <button data-event="calibrate" class="event rounded-xl border border-blue-300 bg-blue-50 p-3 text-left"><b class="block">Calibrate Star Lens</b><span class="text-xs text-black/50">Completes Elara's quest</span></button>
+              <button id="tick" class="rounded-xl border border-black/20 bg-white p-3 text-left"><b class="block">Tick entire world</b><span class="text-xs text-black/50">All NPCs process events</span></button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="space-y-5">
+          <div class="rounded-2xl border border-black/10 bg-white/75 p-4 shadow-lg"><div class="flex justify-between"><h2 class="font-black uppercase tracking-wider">Faction event log</h2><button id="events-reload" class="text-xs font-black text-moss underline">Reload</button></div><div id="events" class="scroll mt-3 max-h-80 space-y-2 overflow-auto"><p class="text-sm text-black/45">No events.</p></div></div>
+          <div class="rounded-2xl border border-black/10 bg-white/75 p-4 shadow-lg"><h2 class="font-black uppercase tracking-wider">YAML quests</h2><div id="quests" class="mt-3 space-y-2"></div></div>
+          <div class="rounded-2xl bg-ink p-4 text-paper shadow-lg"><div class="flex justify-between"><h2 class="font-black uppercase tracking-wider">Requests</h2><button id="clear" class="text-xs font-bold text-gold underline">Clear</button></div><div id="log" class="scroll mt-3 max-h-96 space-y-2 overflow-auto font-mono text-[11px]"><p class="text-white/35">Requests appear here.</p></div></div>
+        </aside>
+      </main>
+    </div>
+
+    <script>
+      const API="http://localhost:8000"; const s={worldId:null,npcs:[],factions:[],quests:[],npcId:null,tracks:[]}; const $=id=>document.getElementById(id); const esc=v=>String(v??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[c]);
+      const npc=()=>s.npcs.find(n=>n.id===s.npcId); const faction=()=>s.factions.find(f=>f.id===npc()?.faction_id);
+      function busy(value){document.querySelectorAll("button").forEach(b=>b.disabled=value)}
+      function notify(message,error=false){const n=$("notice");n.textContent=message;n.className=`mb-5 rounded-xl border px-4 py-3 text-sm font-bold ${error?"border-red-300 bg-red-100 text-red-900":"border-moss/30 bg-moss/10 text-moss"}`;n.classList.remove("hidden");clearTimeout(notify.t);notify.t=setTimeout(()=>n.classList.add("hidden"),5000)}
+      function log(method,path,status,ms,data){const root=$("log");if(root.querySelector("p"))root.innerHTML="";const el=document.createElement("div");el.className=`rounded-lg border p-2 ${status>=400||!status?"border-red-400/40 bg-red-400/10":"border-white/10 bg-white/5"}`;el.innerHTML=`<div><b class="text-gold">${method}</b> ${esc(path)}</div><div class="text-white/40">${status||"ERR"} · ${ms}ms</div><pre class="mt-1 whitespace-pre-wrap text-white/55">${esc(JSON.stringify(data).slice(0,500))}</pre>`;root.prepend(el)}
+      async function api(path,options={}){const method=options.method||"GET",start=performance.now();try{const r=await fetch(API+path,{...options,headers:{"Content-Type":"application/json",...(options.headers||{})}}),text=await r.text(),data=text?JSON.parse(text):null;log(method,path,r.status,Math.round(performance.now()-start),data);if(!r.ok)throw new Error(typeof data?.detail==="string"?data.detail:JSON.stringify(data?.detail||data));return data}catch(e){if(e instanceof TypeError)log(method,path,0,Math.round(performance.now()-start),{error:e.message});throw e}}
+      async function run(message,fn){busy(true);try{await fn();notify(message)}catch(e){console.error(e);notify(e.message,true)}finally{busy(false)}}
+      async function seed(){const result=await api("/seed",{method:"POST"});s.worldId=result.world_id;await loadWorld();notify(`Seeded YAML and upserted ${result.hydra_knowledge_ids.length} Hydra knowledge sources`)}
+      async function loadWorld(){if(!s.worldId)return;const [w,f,n,q]=await Promise.all([api(`/worlds/${s.worldId}`),api(`/worlds/${s.worldId}/factions`),api(`/worlds/${s.worldId}/npcs`),api(`/worlds/${s.worldId}/quests`)]);s.factions=f;s.npcs=n;s.quests=q;if(!n.some(x=>x.id===s.npcId))s.npcId=n[0]?.id;$("world").textContent=`${w.name} · ${w.description} · ${w.id}`;renderNpcs();renderQuests();await selectNpc(s.npcId,false)}
+      function renderNpcs(){$("npc-count").textContent=s.npcs.length;$("npcs").innerHTML=s.npcs.map(n=>`<button data-npc="${n.id}" class="w-full rounded-xl border p-3 text-left ${n.id===s.npcId?"border-moss bg-moss text-white":"border-black/10 bg-white/60"}"><b class="block">${esc(n.name)}</b><span class="text-xs opacity-65">${esc(n.role)}</span></button>`).join("");document.querySelectorAll("[data-npc]").forEach(b=>b.onclick=()=>run("NPC selected",()=>selectNpc(b.dataset.npc,true)))}
+      async function selectNpc(id,rerender=true){if(!id)return;s.npcId=id;if(rerender)renderNpcs();const n=npc(),f=faction();$("npc-name").textContent=n.name;$("role").textContent=n.role+" · "+n.behavior_prompt;$("faction").textContent=f?.name||"";s.tracks=await api(`/worlds/${s.worldId}/npcs/${s.npcId}/tracks`);$("tracks").innerHTML=s.tracks.map(t=>`<button data-track="${t.id}" class="rounded-xl border border-black/15 bg-white p-3 text-left transition hover:border-gold hover:bg-gold/10"><b class="block">${esc(t.player_text)}</b><span class="text-xs text-black/45">${esc(t.id)}</span></button>`).join("");document.querySelectorAll("[data-track]").forEach(b=>b.onclick=()=>run("Interaction generated",()=>interact(b.dataset.track)));await Promise.all([loadState(),loadEvents()])}
+      async function interact(track){const r=await api(`/worlds/${s.worldId}/npcs/${s.npcId}/interact?debug=true`,{method:"POST",body:JSON.stringify({player_id:"player_1",track})});$("response").classList.remove("hidden");$("response-track").textContent=track.replaceAll("_"," ");$("repeat").textContent=`asked ${r.repeat_count}×`;$("tone").textContent=r.tone;$("dialogue").textContent=r.dialogue;if(r.quest_decision){$("quest-result").classList.remove("hidden");$("quest-result").innerHTML=`<b>${esc(r.quest_decision)}${r.quest?": "+esc(r.quest.title):""}</b><p class="mt-1">${esc(r.quest_reason)}</p>`}else $("quest-result").classList.add("hidden");renderState(r.debug);await Promise.all([loadEvents(),loadMemories()])}
+      function renderState(x){x=x||{};const values=[["Affinity",x.affinity||0],["Trust",x.trust||0],["Fear",x.fear||0],["Respect",x.respect||0]];$("metrics").innerHTML=values.map(([k,v])=>`<div><div class="flex justify-between text-xs font-bold"><span>${k}</span><span>${v}</span></div><div class="mt-1 h-2 rounded bg-black/10"><div class="h-2 rounded ${v<0?"bg-ember":"bg-moss"}" style="width:${k==="Fear"?Math.max(0,v):Math.max(0,Math.min(100,(v+100)/2))}%"></div></div></div>`).join("");const tags=x.belief_tags_json||x.belief_tags||[];$("tags").innerHTML=tags.length?tags.map(t=>`<span class="rounded-full bg-ember/10 px-2 py-1 text-xs font-bold text-ember">${esc(t)}</span>`).join(""):'<span class="text-xs text-black/40">No tags</span>';$("summary").textContent=x.belief_summary||"No belief summary yet."}
+      async function loadState(){if(!s.npcId)return;renderState(await api(`/worlds/${s.worldId}/npcs/${s.npcId}/player-state`))}
+      async function loadMemories(){if(!s.npcId)return;const q=encodeURIComponent($("memory-query").value);const r=await api(`/worlds/${s.worldId}/npcs/${s.npcId}/memories?query=${q}&limit=10`);$("memories").innerHTML=r.memories.length?r.memories.map(m=>`<div class="rounded-lg border border-black/10 bg-white p-3"><p class="text-sm">${esc(m.text)}</p><p class="mt-1 text-[10px] font-bold uppercase text-black/40">${esc(m.source)} · importance ${m.importance} · score ${m.relevancy_score??"n/a"}</p></div>`).join(""):'<p class="rounded-lg bg-ember/10 p-3 text-sm text-ember">No memories found.</p>'}
+      async function loadEvents(){const f=faction();if(!f)return;const rows=await api(`/worlds/${s.worldId}/factions/${f.id}/events?limit=40`);$("events").innerHTML=rows.length?rows.map(e=>`<div class="rounded-lg border border-black/10 bg-white p-2"><b class="text-xs text-ember">#${e.id} ${esc(e.event_type)}</b><p class="mt-1 text-xs text-black/60">${esc(e.summary)}</p></div>`).join(""):'<p class="text-sm text-black/45">No faction events.</p>'}
+      function renderQuests(){$("quests").innerHTML=s.quests.map(q=>`<div class="rounded-lg border border-black/10 bg-white p-3"><b class="text-sm">${esc(q.title)}</b>${q.essential?'<span class="ml-2 rounded bg-gold/20 px-2 py-1 text-[9px] font-black text-ember">ESSENTIAL</span>':""}<p class="mt-1 text-xs text-black/50">${esc(q.description)}</p></div>`).join("")}
+      const defs={steal:{type:"ITEM_STOLEN",temple:true,summary:"The player stole the Sacred Relic from the Ashen Temple.",payload:{entity_key:"sacred_relic"},importance:.95},help:{type:"PLAYER_HELPED",summary:"The player helped the selected faction during a dangerous crisis.",payload:{},importance:.75},attack:{type:"PLAYER_ATTACKED",direct:true,summary:"The player attacked the selected NPC without warning.",payload:{},importance:1},return_relic:{type:"ITEM_RETURNED",temple:true,summary:"The player returned the Sacred Relic to the Ashen Temple.",payload:{entity_key:"sacred_relic",destination:"ashen_temple"},importance:1},calibrate:{type:"ENTITY_UPDATED",mage:true,summary:"The player calibrated the Star Lens.",payload:{entity_key:"star_lens",calibrated:true},importance:.9}};
+      async function emit(key){const d=defs[key],n=npc();if(!n)throw new Error("Select an NPC");let f=faction();if(d.temple)f=s.factions.find(x=>x.name==="Ashen Temple");if(d.mage)f=s.factions.find(x=>x.name==="Mages Guild");await api(`/worlds/${s.worldId}/events`,{method:"POST",body:JSON.stringify({faction_id:f.id,event_type:d.type,actor_id:"player_1",target_npc_id:d.direct?n.id:null,visibility:d.direct?"DIRECT":"PUBLIC",summary:d.summary,payload_json:d.payload,importance:d.importance})});await loadEvents()}
+      document.querySelectorAll("[data-event]").forEach(b=>b.onclick=()=>run("Event emitted",()=>emit(b.dataset.event)));$("seed").onclick=()=>run("World seeded",seed);$("refresh").onclick=()=>run("World refreshed",loadWorld);$("tick").onclick=()=>run("World ticked",async()=>{await api(`/worlds/${s.worldId}/tick`,{method:"POST"});await Promise.all([loadState(),loadEvents()])});$("load-state").onclick=()=>run("State loaded",loadState);$("recall").onclick=()=>run("Memories recalled",loadMemories);$("events-reload").onclick=()=>run("Events loaded",loadEvents);$("clear").onclick=()=>$("log").innerHTML='<p class="text-white/35">Requests appear here.</p>';
+      (async()=>{try{await api("/health");$("health").textContent="API online";const worlds=await api("/worlds");const existing=worlds.find(w=>w.name==="Aelryn")||worlds[0];if(existing){s.worldId=existing.id;await loadWorld()}}catch(e){$("health").textContent="API offline";notify(e.message,true)}renderState(null)})();
+    </script>
+  </body>
+</html>
