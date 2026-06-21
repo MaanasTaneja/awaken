@@ -29,9 +29,13 @@ def get_or_create_state(db: Session, npc_id: str, player_id: str = "player_1") -
 def get_or_create_cursor(db: Session, npc_id: str) -> models.NPCEventCursor:
     cur = db.get(models.NPCEventCursor, npc_id)
     if cur is None:
-        cur = models.NPCEventCursor(npc_id=npc_id, last_processed_event_id=0)
-        db.add(cur)
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        stmt = pg_insert(models.NPCEventCursor).values(
+            npc_id=npc_id, last_processed_event_id=0
+        ).on_conflict_do_nothing(index_elements=["npc_id"])
+        db.execute(stmt)
         db.flush()
+        cur = db.get(models.NPCEventCursor, npc_id)
     return cur
 
 

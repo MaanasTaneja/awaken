@@ -123,6 +123,7 @@ async def interact(
     simulation.sync_npc(db, npc.id, body.player_id)
 
     state = simulation.get_or_create_state(db, npc.id, body.player_id)
+    db.commit()
     state_payload = _state_dict(state)
 
     # Fetch quests first so their titles enrich the recall query

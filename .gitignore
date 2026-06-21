@@ -30,3 +30,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Build artifacts / large zips
+*.zip
+
+# Environment files
+.env
+.env.*
+!.env.example
