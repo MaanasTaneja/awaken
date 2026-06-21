@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { EVENTS } from "@/constants/events";
-import { api } from "@/hooks/useAwakenAPI";
+import { api, WorldContext } from "@/hooks/useAwakenAPI";
 
 interface Props {
+  ctx: WorldContext | null;
   offline: boolean;
   onAfterEvent: () => void;
 }
 
-export function ActionHUD({ offline, onAfterEvent }: Props) {
+export function ActionHUD({ ctx, offline, onAfterEvent }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -15,20 +16,21 @@ export function ActionHUD({ offline, onAfterEvent }: Props) {
     const ev = EVENTS.find((e) => e.id === evId)!;
     setBusy(evId);
     try {
-      if (offline) {
+      if (offline || !ctx) {
         setToast(`(demo) ${ev.label}`);
       } else {
-        await api.fireEvent({
+        await api.fireEvent(ctx, ev.faction, {
           event_type: ev.event_type,
           summary: ev.summary,
           importance: ev.importance,
           visibility: ev.visibility,
         });
-        await api.tick();
+        await api.tick(ctx);
         setToast(`✓ ${ev.label}`);
       }
       onAfterEvent();
-    } catch {
+    } catch (err) {
+      console.error(err);
       setToast(`✗ Failed: ${ev.label}`);
     } finally {
       setBusy(null);

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from concurrent.futures import ThreadPoolExecutor
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import hydra, models, schemas, simulation
@@ -65,6 +67,7 @@ def interact(
     world_id: str,
     npc_id: str,
     body: schemas.InteractionRequest,
+    background_tasks: BackgroundTasks,
     debug: bool = Query(False),
     db: Session = Depends(get_db),
 ):
@@ -98,15 +101,29 @@ def interact(
     )
     db.commit()
 
-    simulation.sync_npc(db, npc.id, body.player_id)
+    # Get current state immediately (no LLM call) and kick off recall + sync in parallel.
+    # sync_npc (LLM belief update) runs in background after response so dialogue is instant.
     state = simulation.get_or_create_state(db, npc.id, body.player_id)
+    db.commit()
     state_payload = _state_dict(state)
-    context = hydra.recall_context(
-        world_id,
-        npc.id,
-        f"{track['player_text']} {state.belief_summary}",
-        limit=10,
-    )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        context_future = pool.submit(
+            hydra.recall_context,
+            world_id,
+            npc.id,
+            f"{track['player_text']} {state.belief_summary}",
+            10,
+        )
+        context = context_future.result()
+
+    def _bg_sync() -> None:
+        from ..db import SessionLocal
+        with SessionLocal() as bg_db:
+            simulation.sync_npc(bg_db, npc.id, body.player_id)
+            bg_db.commit()
+
+    background_tasks.add_task(_bg_sync)
 
     quest = simulation.assigned_quest_for_npc(db, npc.id) if body.track == "quest" else None
     quest_decision = None

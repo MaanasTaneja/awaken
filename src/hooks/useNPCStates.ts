@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NPCS } from "@/constants/npcs";
-import { api, NPCState } from "./useAwakenAPI";
+import { api, NPCState, WorldContext } from "./useAwakenAPI";
 
 function mockState(id: string): NPCState {
-  // deterministic-ish demo data
   const seeds: Record<string, Partial<NPCState>> = {
     varyon:  { affinity:  30, trust:  40, fear: -10, respect:  50, belief_tags: ["PLAYER_HELPED_TEMPLE"], belief_summary: "A pious soul, perhaps." },
     cassian: { affinity:  10, trust:  20, fear:   0, respect:  30, belief_tags: ["PLAYER_IS_NEW"],        belief_summary: "Watching this stranger." },
@@ -15,7 +14,7 @@ function mockState(id: string): NPCState {
   return { npc_id: id, affinity: 0, trust: 0, fear: 0, respect: 0, belief_tags: [], belief_summary: "Unknown.", ...seeds[id] };
 }
 
-export function useNPCStates() {
+export function useNPCStates(ctx: WorldContext | null) {
   const [states, setStates] = useState<Record<string, NPCState>>({});
   const [offline, setOffline] = useState(false);
   const [changed, setChanged] = useState<Record<string, number>>({});
@@ -26,7 +25,14 @@ export function useNPCStates() {
     for (const id of Object.keys(next)) {
       const a = prev.current[id];
       const b = next[id];
-      if (!a || a.affinity !== b.affinity || a.trust !== b.trust || a.fear !== b.fear || a.respect !== b.respect || (a.belief_tags?.join("|") !== b.belief_tags?.join("|"))) {
+      if (
+        !a ||
+        a.affinity !== b.affinity ||
+        a.trust !== b.trust ||
+        a.fear !== b.fear ||
+        a.respect !== b.respect ||
+        (a.belief_tags?.join("|") !== b.belief_tags?.join("|"))
+      ) {
         flags[id] = Date.now();
       }
     }
@@ -36,8 +42,11 @@ export function useNPCStates() {
   }, []);
 
   const refreshAll = useCallback(async () => {
+    if (!ctx) return;
     try {
-      const results = await Promise.all(NPCS.map((n) => api.getNpcState(n.id).catch(() => null)));
+      const results = await Promise.all(
+        NPCS.map((n) => api.getNpcState(ctx, n.id).catch(() => null))
+      );
       if (results.every((r) => r === null)) throw new Error("all failed");
       const map: Record<string, NPCState> = {};
       results.forEach((r, i) => {
@@ -51,23 +60,34 @@ export function useNPCStates() {
       NPCS.forEach((n) => (map[n.id] = mockState(n.id)));
       apply(map);
     }
-  }, [apply]);
+  }, [ctx, apply]);
 
   const refreshOne = useCallback(async (id: string) => {
+    if (!ctx) return;
     try {
-      const s = await api.getNpcState(id);
+      const s = await api.getNpcState(ctx, id);
       apply({ ...prev.current, [id]: s });
       setOffline(false);
     } catch {
-      // keep prior
+      // keep prior state
     }
-  }, [apply]);
+  }, [ctx, apply]);
+
+  // Seed mock data immediately so the panel isn't blank while loading
+  useEffect(() => {
+    if (!ctx) {
+      const map: Record<string, NPCState> = {};
+      NPCS.forEach((n) => (map[n.id] = mockState(n.id)));
+      apply(map);
+    }
+  }, [ctx, apply]);
 
   useEffect(() => {
+    if (!ctx) return;
     refreshAll();
     const t = setInterval(refreshAll, 5000);
     return () => clearInterval(t);
-  }, [refreshAll]);
+  }, [ctx, refreshAll]);
 
   return { states, offline, changed, refreshAll, refreshOne };
 }
