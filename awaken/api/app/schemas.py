@@ -183,7 +183,7 @@ class QuestCreate(BaseModel):
     essential: bool = False
     priority: int = 0
     objective_json: dict[str, Any] = Field(default_factory=dict)
-    base_dialogue: str = ""
+    base_dialogue: str | None = None
     base_hint: str | None = None
 
 
@@ -196,10 +196,7 @@ class QuestOut(QuestCreate):
 
 
 class NPCQuestAssign(BaseModel):
-    minimum_affinity: int = -100
-    minimum_trust: int = -100
-    required_tags: list[str] = Field(default_factory=list)
-    blocked_tags: list[str] = Field(default_factory=list)
+    pass  # simple assignment — no thresholds; LLM decides based on beliefs
 
 
 # ---------- Interactions ----------
@@ -211,7 +208,7 @@ class TalkQuest(BaseModel):
     status: str
 
 
-TrackId = Literal["greeting", "identity", "quest", "opinion", "world_lore"]
+TrackId = Literal["greeting", "identity", "quest", "quest_status", "opinion", "world_lore"]
 
 
 class TrackOut(BaseModel):
@@ -229,13 +226,9 @@ class InteractionResponse(BaseModel):
     session_id: str
     npc_id: str
     track: TrackId
-    repeat_count: int
     dialogue: str
     tone: str
     quest: TalkQuest | None = None
-    quest_decision: str | None = None
-    quest_reason: str | None = None
-    hints_provided: list[str] = Field(default_factory=list)
     debug: dict[str, Any] | None = None
 
 

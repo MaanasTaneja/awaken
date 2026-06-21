@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
 
-TRACK_IDS = {"greeting", "identity", "quest", "opinion", "world_lore"}
+TRACK_IDS = {
+    "greeting",
+    "identity",
+    "quest",
+    "quest_status",
+    "opinion",
+    "world_lore",
+}
 
 
 class WorldInfo(BaseModel):
@@ -31,13 +38,6 @@ class QuestCompletion(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
 
 
-class QuestDialogue(BaseModel):
-    offered_base: str
-    refused_base: str | None = None
-    active_base: str
-    completed_base: str
-
-
 class QuestDefinition(BaseModel):
     name: str
     description: str
@@ -45,14 +45,10 @@ class QuestDefinition(BaseModel):
     priority: int = 0
     objectives: list[str] = Field(default_factory=list)
     completion: QuestCompletion
-    quest_dialogue: QuestDialogue
+    # Only essential quests need a base_dialogue — the LLM must weave it in.
+    # Optional quests have no scripted line; the LLM decides whether to offer them.
+    base_dialogue: str | None = None
     hint: str | None = None
-
-    @model_validator(mode="after")
-    def validate_dialogue_branches(self):
-        if not self.essential and not self.quest_dialogue.refused_base:
-            raise ValueError("non-essential quests require quest_dialogue.refused_base")
-        return self
 
 
 class PersonalityDefinition(BaseModel):
@@ -72,10 +68,6 @@ class TrackDefinition(BaseModel):
     guidance: str
 
 
-class QuestRules(BaseModel):
-    guidance: str = "Decide from the NPC's beliefs and memories whether to trust the player."
-
-
 class NPCDefinition(BaseModel):
     name: str
     role: str
@@ -84,7 +76,6 @@ class NPCDefinition(BaseModel):
     personality: PersonalityDefinition
     behavioral_prompt: str
     tracks: dict[str, TrackDefinition]
-    quest_rules: QuestRules = Field(default_factory=QuestRules)
 
     @model_validator(mode="after")
     def validate_tracks(self):

@@ -136,6 +136,37 @@ def store_memories(world_id: str, npc_id: str, memories: list[dict[str, Any]]) -
     _wait_until_searchable(client, sub_tenant_id, ids)
 
 
+def clear_world_context(world_id: str, npc_ids: list[str], knowledge_ids: list[str]) -> None:
+    """Wipe all HydraDB data for a world before re-seeding.
+
+    - NPC memories are isolated per sub_tenant (UUID-based), so we delete each one.
+    - World knowledge uses deterministic IDs that are passed in from _knowledge_sources().
+    """
+    client = _get_client()
+
+    # Delete every NPC's private memory sub_tenant
+    for npc_id in npc_ids:
+        try:
+            client.context.delete(
+                tenant_id=settings.hydra_tenant_id,
+                sub_tenant_id=_sub_tenant_id(world_id, npc_id),
+                type="memory",
+            )
+        except Exception:
+            pass  # sub_tenant may not exist on first run
+
+    # Delete shared world knowledge by ID
+    if knowledge_ids:
+        try:
+            client.context.delete(
+                tenant_id=settings.hydra_tenant_id,
+                ids=knowledge_ids,
+                type="knowledge",
+            )
+        except Exception:
+            pass
+
+
 def store_world_knowledge(sources: list[dict[str, Any]]) -> list[str]:
     """Upsert canonical YAML world sources into HydraDB's knowledge collection."""
     if not sources:

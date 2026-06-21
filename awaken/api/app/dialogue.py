@@ -39,22 +39,15 @@ BELIEF_SCHEMA = _object(
     }
 )
 
-QUEST_DECISION_SCHEMA = _object(
-    {
-        "decision": {"type": "string", "enum": ["OFFER", "REFUSE"]},
-        "reason": {"type": "string"},
-    }
-)
-
-DIALOGUE_SCHEMA = _object(
+RESPONSE_SCHEMA = _object(
     {
         "dialogue": {"type": "string"},
         "tone": {
             "type": "string",
             "enum": ["warm", "neutral", "cold", "hostile", "afraid", "amused", "guarded"],
         },
-        "event_summary": {"type": "string"},
-        "hints_provided": {"type": "array", "items": {"type": "string"}},
+        # stable_key of the quest the NPC chose to offer, or null if none offered
+        "quest_offered": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     }
 )
 
@@ -101,6 +94,7 @@ def form_npc_beliefs(
     current_state: dict[str, Any],
     events: list[dict[str, Any]],
     gossip: list[dict[str, Any]],
+    historical_context: list[dict[str, Any]],
 ) -> dict[str, Any]:
     result = _openai_structured(
         name="npc_belief_update",
@@ -109,9 +103,12 @@ def form_npc_beliefs(
             "You are the private belief processor for an RPG NPC. Interpret events subjectively through "
             "the NPC's personality, faction worldview, existing beliefs, and trusted hearsay. Be willing "
             "to form surprising, biased, mistaken, forgiving, obsessive, or contradictory opinions when "
-            "the context supports them. Repeated questions may cause affection, suspicion, amusement, or "
-            "anger. Deltas must each be between -20 and 20. Memories are subjective interpretations, not "
-            "copies of every event. Never place output inside a schema or wrapper object."
+            "the full history supports them. "
+            "CRITICAL RULES: "
+            "(1) The NPC's behavioral_prompt describes personality traits and tendencies — it is NOT a description of what the player has already done. Do not infer tags or apply negative deltas based on the behavioral_prompt alone. "
+            "(2) Do not invent patterns (e.g. 'repeated questions', 'persistence') from a single event. A pattern requires multiple events showing the same behaviour. "
+            "(3) If there is only one neutral event (like a first greeting), deltas should be close to zero and no strong tags should be added. "
+            "Deltas must each be between -20 and 20. Memories are subjective interpretations, not copies of every event. Never place output inside a schema or wrapper object."
         ),
         payload={
             "npc": npc,
@@ -119,6 +116,7 @@ def form_npc_beliefs(
             "current_state": current_state,
             "new_events": events,
             "trusted_hearsay": gossip,
+            "retrieved_history": historical_context,
         },
     )
     for key in ("affinity_delta", "trust_delta", "fear_delta", "respect_delta"):
@@ -128,72 +126,117 @@ def form_npc_beliefs(
     return result
 
 
-def decide_optional_quest(
-    *,
-    npc: dict[str, Any],
-    faction: dict[str, Any],
-    state: dict[str, Any],
-    context: list[dict[str, Any]],
-    quest: dict[str, Any],
-    guidance: str,
-) -> dict[str, str]:
-    return _openai_structured(
-        name="optional_quest_decision",
-        schema=QUEST_DECISION_SCHEMA,
-        system=(
-            "Decide whether this NPC willingly entrusts the player with an optional quest. This is a "
-            "subjective character decision, not a numeric threshold check. Use personality, faction, "
-            "beliefs, memories, hearsay, risk, and quest sensitivity. Return OFFER or REFUSE and the NPC's reason."
-        ),
-        payload={
-            "npc": npc,
-            "faction": faction,
-            "player_state": state,
-            "retrieved_context": context,
-            "quest": quest,
-            "npc_specific_guidance": guidance,
-        },
-    )
-
-
-def generate_track_dialogue(
+def generate_npc_response(
     *,
     track_id: str,
     track: dict[str, Any],
     npc: dict[str, Any],
     faction: dict[str, Any],
-    state: dict[str, Any],
+    player_state: dict[str, Any],
     context: list[dict[str, Any]],
-    repeat_count: int,
-    quest_decision: str | None,
-    quest_reason: str | None,
-    protected_base_statement: str | None,
-    protected_quest_facts: dict[str, Any] | None,
+    essential_quests: list[dict[str, Any]],
+    optional_quests: list[dict[str, Any]],
+    quest_status_context: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Single LLM call that generates NPC dialogue.
+
+    The LLM is given everything — NPC persona, faction, player beliefs,
+    retrieved memories/lore — and responds freely. For essential quests the
+    NPC MUST weave the base_dialogue into the response. For optional quests
+    the NPC decides entirely based on its beliefs about the player.
+    """
+    quest_instructions: list[str] = []
+    if essential_quests:
+        lines = ["ESSENTIAL QUESTS (you MUST work each of these into your response, preserving all objectives and locations):"]
+        for q in essential_quests:
+            lines.append(
+                f"  - [{q['key']}] {q['title']}: \"{q['base_dialogue']}\"\n"
+                f"    Objectives: {q['objectives']}"
+            )
+        quest_instructions.append("\n".join(lines))
+    if optional_quests:
+        lines = ["OPTIONAL QUESTS (offer one ONLY if it genuinely fits how you feel about this player — you may ignore them entirely):"]
+        for q in optional_quests:
+            lines.append(
+                f"  - [{q['key']}] {q['title']}: {q['description']}\n"
+                f"    Objectives: {q['objectives']}"
+            )
+        quest_instructions.append("\n".join(lines))
+
+    all_quest_keys = [q["key"] for q in essential_quests + optional_quests]
+    quest_key_hint = (
+        f"If you offer a quest, set quest_offered to its key (one of: {all_quest_keys}). "
+        "Otherwise set quest_offered to null."
+    ) if all_quest_keys else "Set quest_offered to null."
+
+    # quest_status track: NPC reports on what's happened, never offers new quests
+    if quest_status_context is not None:
+        status_lines = ["ACTIVE QUESTS FOR STATUS REPORT (do NOT offer new quests — only report on progress):"]
+        for q in quest_status_context:
+            status_lines.append(
+                f"  - [{q['key']}] {q['title']} (player status: {q['player_status']})\n"
+                f"    Objectives: {q['objectives']}"
+            )
+        status_block = "\n".join(status_lines)
+        system = (
+            "You are an RPG NPC giving a status update on an active quest. "
+            "Report on what the player has or hasn't done based solely on your memories and faction events — "
+            "do NOT offer new quests. "
+            "Respond in your character's voice. "
+            "Do not invent lore not present in the retrieved context. "
+            "LENGTH: ONE short paragraph, 2 to 4 sentences. "
+            "End with a clear statement about where things stand (e.g. 'Bring it back when you have it.' / "
+            "'The relic is returned. You have my grudging respect.').\n\n"
+            + status_block
+            + "\n\nSet quest_offered to null."
+        )
+        return _openai_structured(
+            name="npc_response",
+            schema=RESPONSE_SCHEMA,
+            system=system,
+            payload={
+                "track_id": track_id,
+                "track_definition": track,
+                "npc": npc,
+                "faction": faction,
+                "player_state": player_state,
+                "retrieved_world_knowledge_and_memories": context,
+            },
+        )
+
+    has_quests = bool(essential_quests or optional_quests)
+    quest_ending = (
+        "Your final sentence MUST be a clear first-person decision about the quest: "
+        "either committing to give it (e.g. 'I will give you this task.', 'Find the relic and bring it back.') "
+        "or refusing it (e.g. 'I have nothing for you.', 'You are not ready for this.'). "
+        "Do not ask a question or leave the quest outcome ambiguous."
+    ) if has_quests else (
+        "Do not end with a question. Close with a statement or a clear reaction."
+    )
+
+    system = (
+        "You are an RPG NPC generating a single in-character response. "
+        "Respond naturally based on your personality, your beliefs about the player, "
+        "your faction's worldview, and everything you recall from memory and world knowledge. "
+        "Your response may be warm, evasive, irritated, funny, hostile, frightened, biased, "
+        "or unexpectedly compassionate — whatever the full context warrants. "
+        "Do not invent canonical lore not present in the retrieved context. "
+        "LENGTH: Keep it to ONE short paragraph — 2 to 4 sentences maximum. Do not ramble. "
+        + quest_ending
+        + ("\n\n" + "\n\n".join(quest_instructions) if quest_instructions else "")
+        + f"\n\n{quest_key_hint}"
+    )
+
     return _openai_structured(
-        name="npc_track_dialogue",
-        schema=DIALOGUE_SCHEMA,
-        system=(
-            "Generate one in-character RPG NPC response for the selected interaction track. The response "
-            "should feel emergent and may be warm, evasive, irritated, funny, hostile, frightened, biased, "
-            "or unexpectedly compassionate. Ground it in retrieved world knowledge and private memories. "
-            "The player selected a fixed track; do not answer a different track. If a protected base statement "
-            "is supplied, preserve its quest decision, objectives, people, items, and locations exactly while "
-            "personalizing how the NPC delivers it. Never reverse OFFER, REFUSE, ACTIVE, or COMPLETED lifecycle "
-            "state, and never describe a completed quest as unfinished. Repetition count matters: the "
-            "NPC can explicitly react to being asked again according to personality. Do not invent canonical lore."
-        ),
+        name="npc_response",
+        schema=RESPONSE_SCHEMA,
+        system=system,
         payload={
             "track_id": track_id,
             "track_definition": track,
-            "repeat_count": repeat_count,
             "npc": npc,
             "faction": faction,
-            "player_state": state,
+            "player_state": player_state,
             "retrieved_world_knowledge_and_memories": context,
-            "quest_decision": quest_decision,
-            "quest_reason": quest_reason,
-            "protected_base_statement": protected_base_statement,
-            "protected_quest_facts": protected_quest_facts,
         },
     )

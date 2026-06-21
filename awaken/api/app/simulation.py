@@ -65,17 +65,20 @@ def relationship_beliefs(db: Session, npc: models.NPC, player_id: str):
     trust, and affinity are context for the belief model, which decides whether
     this NPC accepts, doubts, resents, or ignores what the other NPC believes.
     """
-    rels = list(
-        db.scalars(
-            select(models.NPCRelationship)
-            .where(models.NPCRelationship.from_npc_id == npc.id)
-            .order_by(models.NPCRelationship.trust.desc())
+    # Single JOIN query instead of N+1 individual lookups
+    stmt = (
+        select(models.NPCRelationship, models.NPCPlayerState, models.NPC)
+        .outerjoin(
+            models.NPCPlayerState,
+            (models.NPCPlayerState.npc_id == models.NPCRelationship.to_npc_id)
+            & (models.NPCPlayerState.player_id == player_id),
         )
+        .outerjoin(models.NPC, models.NPC.id == models.NPCRelationship.to_npc_id)
+        .where(models.NPCRelationship.from_npc_id == npc.id)
+        .order_by(models.NPCRelationship.trust.desc())
     )
     out = []
-    for r in rels:
-        st = db.get(models.NPCPlayerState, (r.to_npc_id, player_id))
-        source_npc = db.get(models.NPC, r.to_npc_id)
+    for r, st, source_npc in db.execute(stmt):
         if st is None or not st.belief_summary:
             continue
         out.append(
@@ -149,6 +152,14 @@ def sync_npc(db: Session, npc_id: str, player_id: str = "player_1") -> dict[str,
             for event in event_dicts
         ],
     )
+    historical_context = hydra.recall_context(
+        npc.world_id,
+        npc.id,
+        " ".join(event["summary"] for event in event_dicts)
+        or state.belief_summary
+        or "the player's history with this NPC",
+        limit=8,
+    )
 
     update = form_npc_beliefs(
         npc={
@@ -167,6 +178,7 @@ def sync_npc(db: Session, npc_id: str, player_id: str = "player_1") -> dict[str,
         current_state=current,
         events=event_dicts,
         gossip=gossip,
+        historical_context=historical_context,
     )
 
     state.affinity = _clamp(state.affinity + int(update.get("affinity_delta", 0)))
@@ -201,51 +213,25 @@ def sync_npc(db: Session, npc_id: str, player_id: str = "player_1") -> dict[str,
     }
 
 
-# --------------------------------------------------------------------------- #
-# Quest selection (deterministic)
-# --------------------------------------------------------------------------- #
-
-def select_quest_for_npc(
+def assigned_quests_for_npc(
     db: Session, npc_id: str, player_id: str = "player_1"
-) -> models.Quest | None:
-    state = get_or_create_state(db, npc_id, player_id)
-    assignments = list(
-        db.scalars(select(models.NPCQuest).where(models.NPCQuest.npc_id == npc_id))
+) -> list[models.Quest]:
+    """Return all quests assigned to this NPC, excluding ones the player has already completed."""
+    # Single JOIN query instead of 1+2N individual lookups
+    stmt = (
+        select(models.Quest, models.PlayerQuest)
+        .join(models.NPCQuest, models.NPCQuest.quest_id == models.Quest.id)
+        .outerjoin(
+            models.PlayerQuest,
+            (models.PlayerQuest.quest_id == models.Quest.id)
+            & (models.PlayerQuest.player_id == player_id),
+        )
+        .where(models.NPCQuest.npc_id == npc_id)
     )
-    tags = set(state.belief_tags_json or [])
-
-    eligible: list[tuple[models.Quest, models.NPCQuest]] = []
-    for a in assignments:
-        quest = db.get(models.Quest, a.quest_id)
-        if quest is None:
+    quests = []
+    for quest, pq in db.execute(stmt):
+        if pq is not None and pq.status == "COMPLETED":
             continue
-        pq = db.get(models.PlayerQuest, (player_id, quest.id))
-        if pq and pq.status == "COMPLETED":
-            continue
-        if quest.essential:
-            eligible.append((quest, a))
-            continue
-        if state.affinity < a.minimum_affinity:
-            continue
-        if state.trust < a.minimum_trust:
-            continue
-        req = set(a.required_tags_json or [])
-        blk = set(a.blocked_tags_json or [])
-        if req and not req.issubset(tags):
-            continue
-        if blk & tags:
-            continue
-        eligible.append((quest, a))
-
-    if not eligible:
-        return None
-    eligible.sort(key=lambda pair: (pair[0].essential, pair[0].priority), reverse=True)
-    return eligible[0][0]
-
-
-def assigned_quest_for_npc(db: Session, npc_id: str) -> models.Quest | None:
-    """Return the NPC's authored quest regardless of the player's lifecycle state."""
-    assignment = db.scalars(
-        select(models.NPCQuest).where(models.NPCQuest.npc_id == npc_id).limit(1)
-    ).first()
-    return db.get(models.Quest, assignment.quest_id) if assignment else None
+        quests.append(quest)
+    quests.sort(key=lambda q: (q.essential, q.priority), reverse=True)
+    return quests

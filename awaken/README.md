@@ -46,13 +46,13 @@ The YAML definition contains:
   relationships, and exactly five tracks;
 - event interpretation guidance.
 
-Every NPC exposes `greeting`, `identity`, `quest`, `opinion`, and `world_lore`.
+Every NPC exposes `greeting`, `identity`, `quest_offer`, `quest_status`,
+`opinion`, and `world_lore`.
 The browser sends a track ID, never arbitrary dialogue text.
 
 ## Runtime flow
 
-1. Selecting a track appends a targeted `PLAYER_ASKED_TRACK` event containing
-   its repetition count.
+1. Selecting a track appends a normal targeted `PLAYER_ASKED_TRACK` event.
 2. The NPC processes new faction events and hearsay from explicitly configured
    directed relationships. There is no fixed trust threshold; the model sees
    relationship type, trust, and affinity and interprets the hearsay.
@@ -60,9 +60,11 @@ The browser sends a track ID, never arbitrary dialogue text.
 4. A strict structured-output belief call updates subjective state and may add
    interpreted memories.
 5. HydraDB retrieves shared world Knowledge and that NPC's private Memory.
-6. For the quest track, essential quests always choose the offer branch;
-   optional quests receive an emergent `OFFER`/`REFUSE` model decision.
-7. A strict dialogue call personalizes the selected track. Protected quest
+6. `quest_offer` protects only the offer/refuse branch: essential quests always
+   offer, while optional quests receive an emergent model decision.
+7. `quest_status` is fully generated from actual lifecycle state, completion
+   events, beliefs, and retrieved context.
+8. A strict dialogue call personalizes the selected track. Protected quest
    facts and the selected branch cannot be reversed.
 
 ## Main endpoints

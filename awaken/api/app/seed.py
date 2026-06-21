@@ -130,6 +130,11 @@ def seed_demo(db: Session, path: Path = DEFAULT_WORLD_FILE) -> dict[str, Any]:
 
     existing = db.query(models.World).filter_by(stable_key=definition.world.id).first()
     if existing:
+        # Collect old NPC IDs before cascade delete so we can wipe their HydraDB sub_tenants.
+        # Also build the deterministic knowledge IDs that were seeded for this world.
+        old_npc_ids = [n.id for n in db.query(models.NPC).filter_by(world_id=existing.id).all()]
+        old_knowledge_ids = [src["id"] for src in _knowledge_sources(definition)]
+        hydra.clear_world_context(existing.id, old_npc_ids, old_knowledge_ids)
         db.delete(existing)
         db.commit()
 
@@ -172,10 +177,9 @@ def seed_demo(db: Session, path: Path = DEFAULT_WORLD_FILE) -> dict[str, Any]:
             essential=item.essential,
             priority=item.priority,
             objective_json={"steps": item.objectives},
-            base_dialogue=item.quest_dialogue.offered_base,
+            base_dialogue=item.base_dialogue,
             base_hint=item.hint,
             completion_event_json=item.completion.model_dump(),
-            quest_dialogue_json=item.quest_dialogue.model_dump(),
         )
         db.add(quest)
         quests[key] = quest
@@ -192,7 +196,6 @@ def seed_demo(db: Session, path: Path = DEFAULT_WORLD_FILE) -> dict[str, Any]:
             behavior_prompt=item.behavioral_prompt,
             personality_json=item.personality.model_dump(),
             tracks_json={track: value.model_dump() for track, value in item.tracks.items()},
-            quest_rules_json=item.quest_rules.model_dump(),
             base_friendliness=0,
             gossipiness=item.personality.talkativeness,
             stubbornness=item.personality.stubbornness,
