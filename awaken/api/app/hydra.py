@@ -124,16 +124,14 @@ def store_memories(world_id: str, npc_id: str, memories: list[dict[str, Any]]) -
         )
     if not payload:
         return
-    response = client.context.ingest(
+    # Fire-and-forget: memories are for future interactions, not the current one.
+    # We've already done recall_context for this response, so no need to block.
+    client.context.ingest(
         type="memory",
         tenant_id=settings.hydra_tenant_id,
         sub_tenant_id=sub_tenant_id,
         memories=json.dumps(payload),
     )
-    ids = [result.id for result in response.data.results]
-    if not ids:
-        raise RuntimeError("HydraDB accepted the request but returned no ingestion IDs")
-    _wait_until_searchable(client, sub_tenant_id, ids)
 
 
 def clear_world_context(world_id: str, npc_ids: list[str], knowledge_ids: list[str]) -> None:
